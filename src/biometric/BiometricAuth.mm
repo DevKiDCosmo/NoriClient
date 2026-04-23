@@ -15,6 +15,23 @@ namespace biometric {
 namespace {
 constexpr const char *kFallbackId = "demo-id";
 constexpr const char *kFallbackPassword = "demo-password";
+bool gUiHostInitialized = false;
+
+NSImage *resolveDialogIcon(const std::string &dialogIconPath);
+
+void ensureAppInitialized() {
+    if (!gUiHostInitialized) {
+        [NSApplication sharedApplication];
+        [[NSProcessInfo processInfo] setProcessName:@"NoriID"];
+        if ([NSApp respondsToSelector:@selector(finishLaunching)]) {
+            [NSApp finishLaunching];
+        }
+        if ([NSWindow respondsToSelector:@selector(setAllowsAutomaticWindowTabbing:)]) {
+            [NSWindow setAllowsAutomaticWindowTabbing:NO];
+        }
+        gUiHostInitialized = true;
+    }
+}
 
 std::string nsErrorToString(NSError *error) {
     if (error == nil) {
@@ -46,36 +63,134 @@ auto runOnMainThread(F &&block) {
     return result;
 }
 
-void prepareDialogHost() {
-    [NSApplication sharedApplication];
+void prepareAuthDialogHost() {
+    ensureAppInitialized();
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
     [NSApp activateIgnoringOtherApps:YES];
 }
 
-bool askForPasswordFallback() {
-    return runOnMainThread([] {
-      prepareDialogHost();
+void sendAuthUiToBackground() {
+    if (NSApp != nil) {
+        [NSApp hide:nil];
+    }
+}
 
-      NSAlert *alert = [[NSAlert alloc] init];
-      [alert setMessageText:@"Biometric authentication failed"];
-      [alert setInformativeText:@"Do you want to continue with ID and password?"];
-      [alert addButtonWithTitle:@"Use Password"];
-      [alert addButtonWithTitle:@"Cancel"];
+void prepareResponseUiHost(const std::string &appIconPath) {
+    ensureAppInitialized();
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 
-      const NSModalResponse response = [alert runModal];
-      return response == NSAlertFirstButtonReturn;
+    NSImage *appIcon = resolveDialogIcon(appIconPath);
+    if (appIcon != nil) {
+        [NSApp setApplicationIconImage:appIcon];
+    }
+
+    [NSApp activateIgnoringOtherApps:YES];
+}
+
+NSImage *resolveDialogIcon(const std::string &dialogIconPath) {
+    if (!dialogIconPath.empty()) {
+        NSString *path = [NSString stringWithUTF8String:dialogIconPath.c_str()];
+        if (path != nil && [[NSFileManager defaultManager] fileExistsAtPath:path]) {
+            NSImage *customIcon = [[NSImage alloc] initWithContentsOfFile:path];
+            if (customIcon != nil) {
+                return customIcon;
+            }
+        }
+    }
+
+    NSImage *lockIcon = [NSImage imageNamed:NSImageNameLockLockedTemplate];
+    if (lockIcon != nil) {
+        return lockIcon;
+    }
+
+    return [NSApp applicationIconImage];
+}
+
+bool waitForSemaphoreWithRunLoop(dispatch_semaphore_t semaphore, NSTimeInterval timeoutSeconds) {
+    const NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeoutSeconds];
+    while ([deadline timeIntervalSinceNow] > 0) {
+        if (dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_MSEC)) == 0) {
+            return true;
+        }
+
+        // Keep the main run loop responsive while waiting for async auth callbacks.
+        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
+                                 beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+    }
+
+    return false;
+}
+
+enum class CredentialsDialogAction {
+    Authenticated,
+    Canceled,
+    UseNative,
+    Failed
+};
+
+bool isUserCanceledLaError(NSInteger code) {
+    return code == LAErrorUserCancel || code == LAErrorSystemCancel || code == LAErrorAppCancel;
+}
+
+bool authenticateWithNativeMacLogin(std::string &errorMessage) {
+    return runOnMainThread([&errorMessage] {
+      prepareAuthDialogHost();
+
+      LAContext *nativeContext = [[LAContext alloc] init];
+      // Allow device password/PIN fallback in the native system dialog.
+      nativeContext.localizedFallbackTitle = @"Use Password";
+
+      NSError *policyError = nil;
+      const LAPolicy nativePolicy = LAPolicyDeviceOwnerAuthentication;
+      if (![nativeContext canEvaluatePolicy:nativePolicy error:&policyError]) {
+          errorMessage = nsErrorToString(policyError);
+          return false;
+      }
+
+      __block BOOL success = NO;
+      __block std::string callbackErrorMessage;
+      dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+
+      [nativeContext evaluatePolicy:nativePolicy
+                    localizedReason:@"Authenticate with native macOS login to continue."
+                              reply:^(BOOL evaluated, NSError *_Nullable evaluateError) {
+                                  success = evaluated;
+                                  if (!evaluated) {
+                                      callbackErrorMessage = nsErrorToString(evaluateError);
+                                  }
+                                  dispatch_semaphore_signal(semaphore);
+                              }];
+
+      if (!waitForSemaphoreWithRunLoop(semaphore, 45.0)) {
+          errorMessage = "Native macOS login timed out.";
+          return false;
+      }
+
+      if (!success) {
+          errorMessage = callbackErrorMessage.empty() ? "Native macOS login failed." : callbackErrorMessage;
+          return false;
+      }
+
+      return true;
     });
 }
 
-bool promptCustomCredentials(std::string &errorMessage) {
-    return runOnMainThread([&errorMessage] {
-      prepareDialogHost();
+CredentialsDialogAction promptCustomCredentials(bool debugMode, const std::string &dialogIconPath, std::string &errorMessage) {
+    return runOnMainThread([debugMode, &dialogIconPath, &errorMessage] {
+      prepareAuthDialogHost();
 
       NSAlert *alert = [[NSAlert alloc] init];
       [alert setMessageText:@"Password verification"];
       [alert setInformativeText:@"Enter ID and password to continue this request. Login via biometrics failed. The use of user password is prohibited."];
+      NSImage *dialogIcon = resolveDialogIcon(dialogIconPath);
+      if (dialogIcon != nil) {
+          [alert setIcon:dialogIcon];
+      }
       [alert addButtonWithTitle:@"Login"];
       [alert addButtonWithTitle:@"Cancel"];
+      if (debugMode) {
+          [alert addButtonWithTitle:@"Login through Native"];
+      }
 
       NSView *container = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 300, 52)];
 
@@ -104,25 +219,71 @@ bool promptCustomCredentials(std::string &errorMessage) {
       [alert setAccessoryView:container];
 
       const NSModalResponse response = [alert runModal];
+      if (debugMode && response == NSAlertThirdButtonReturn) {
+          return CredentialsDialogAction::UseNative;
+      }
+
       if (response != NSAlertFirstButtonReturn) {
           errorMessage = "Password authentication canceled.";
-          return false;
+          return CredentialsDialogAction::Canceled;
       }
 
       const std::string inputId = [[idField stringValue] UTF8String] ? [[idField stringValue] UTF8String] : "";
       const std::string inputPassword = [[passwordField stringValue] UTF8String] ? [[passwordField stringValue] UTF8String] : "";
 
       if (inputId == kFallbackId && inputPassword == kFallbackPassword) {
-          return true;
+          return CredentialsDialogAction::Authenticated;
       }
 
       errorMessage = "Invalid ID or password.";
-      return false;
+      return CredentialsDialogAction::Failed;
     });
 }
 } // namespace
 
-bool authorizeRequest(const std::string &reason, std::string &errorMessage) {
+void initializeUiHost() {
+    runOnMainThread([] {
+      prepareAuthDialogHost();
+      return true;
+    });
+}
+
+void showJsonResponseWindow(const std::string &jsonText, const std::string &appIconPath) {
+    runOnMainThread([&jsonText, &appIconPath] {
+      prepareResponseUiHost(appIconPath);
+
+      NSAlert *alert = [[NSAlert alloc] init];
+      [alert setMessageText:@"JSON Response"];
+      [alert setInformativeText:@"Request completed successfully."];
+      NSImage *dialogIcon = resolveDialogIcon(appIconPath);
+      if (dialogIcon != nil) {
+          [alert setIcon:dialogIcon];
+      }
+      [alert addButtonWithTitle:@"Close"];
+
+      NSScrollView *scrollView = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 560, 300)];
+      [scrollView setHasVerticalScroller:YES];
+      [scrollView setHasHorizontalScroller:YES];
+      [scrollView setAutohidesScrollers:YES];
+
+      NSTextView *textView = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 560, 300)];
+      [textView setEditable:NO];
+      [textView setSelectable:YES];
+      [textView setFont:[NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular]];
+      NSString *jsonNSString = [NSString stringWithUTF8String:jsonText.c_str()];
+      if (jsonNSString == nil) {
+          jsonNSString = @"(Invalid UTF-8 response body)";
+      }
+      [textView setString:jsonNSString];
+      [scrollView setDocumentView:textView];
+      [alert setAccessoryView:scrollView];
+
+      [alert runModal];
+      return true;
+    });
+}
+
+bool authorizeRequest(const std::string &reason, bool debugMode, const std::string &dialogIconPath, std::string &errorMessage) {
     @autoreleasepool {
         LAContext *context = [[LAContext alloc] init];
         NSError *policyError = nil;
@@ -140,6 +301,8 @@ bool authorizeRequest(const std::string &reason, std::string &errorMessage) {
 
         __block BOOL success = NO;
         __block std::string callbackErrorMessage;
+        __block NSInteger callbackErrorCode = 0;
+        __block bool hasCallbackErrorCode = false;
         dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
 
         [context evaluatePolicy:policy
@@ -148,25 +311,78 @@ bool authorizeRequest(const std::string &reason, std::string &errorMessage) {
                               success = evaluated;
                               if (!evaluated) {
                                   callbackErrorMessage = nsErrorToString(evaluateError);
+                                  if (evaluateError != nil &&
+                                      [[evaluateError domain] isEqualToString:LAErrorDomain]) {
+                                      callbackErrorCode = [evaluateError code];
+                                      hasCallbackErrorCode = true;
+                                  }
                               }
                               dispatch_semaphore_signal(semaphore);
                           }];
 
-        dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
+        if (!waitForSemaphoreWithRunLoop(semaphore, 30.0)) {
+            errorMessage = "Biometric authentication timed out.";
+            return false;
+        }
 
         if (!success) {
-            if (askForPasswordFallback()) {
-                if (promptCustomCredentials(errorMessage)) {
-                    logger::system("Password fallback authentication successful.");
+            if (hasCallbackErrorCode && isUserCanceledLaError(callbackErrorCode)) {
+                errorMessage = callbackErrorMessage.empty() ? "Biometric authentication canceled." : callbackErrorMessage;
+                runOnMainThread([] {
+                  sendAuthUiToBackground();
+                  return true;
+                });
+                return false;
+            }
+
+            const CredentialsDialogAction action = promptCustomCredentials(debugMode, dialogIconPath, errorMessage);
+            if (action == CredentialsDialogAction::UseNative) {
+                if (authenticateWithNativeMacLogin(errorMessage)) {
+                    logger::system("Native macOS login successful.");
+                    runOnMainThread([] {
+                      sendAuthUiToBackground();
+                      return true;
+                    });
                     return true;
                 }
+                logger::warning("Native macOS login failed.");
+                runOnMainThread([] {
+                  sendAuthUiToBackground();
+                  return true;
+                });
+                return false;
+            }
+
+            if (action == CredentialsDialogAction::Authenticated) {
+                logger::system("Password fallback authentication successful.");
+                runOnMainThread([] {
+                  sendAuthUiToBackground();
+                  return true;
+                });
+                return true;
+            }
+
+            if (action == CredentialsDialogAction::Failed) {
                 logger::warning("Password fallback authentication failed.");
+                runOnMainThread([] {
+                  sendAuthUiToBackground();
+                  return true;
+                });
                 return false;
             }
 
             errorMessage = callbackErrorMessage.empty() ? "Biometric authentication canceled." : callbackErrorMessage;
+            runOnMainThread([] {
+              sendAuthUiToBackground();
+              return true;
+            });
             return false;
         }
+
+        runOnMainThread([] {
+          sendAuthUiToBackground();
+          return true;
+        });
 
         return true;
     }

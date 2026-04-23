@@ -15,11 +15,25 @@ struct EnvConfig {
     std::string server;
     std::string port;
     bool biometricRequired = true;
+    bool debugMode = false;
+    std::string dialogIconPath;
 };
 
 struct HttpResponse {
     long statusCode = 0;
     std::string body;
+};
+
+enum class FetchRootStatus {
+    Success,
+    AuthCanceled,
+    Failed
+};
+
+struct FetchRootResult {
+    FetchRootStatus status = FetchRootStatus::Failed;
+    std::optional<HttpResponse> response;
+    std::string message;
 };
 
 std::string trim(const std::string &value) {
@@ -85,6 +99,10 @@ std::optional<EnvConfig> loadEnvConfig(const std::string &envPath) {
             config.port = value;
         } else if (key == "biometric_required") {
             config.biometricRequired = parseBool(value, true);
+        } else if (key == "type") {
+            config.debugMode = (toLower(value) == "debug");
+        } else if (key == "dialog_icon_path") {
+            config.dialogIconPath = value;
         }
     }
 
@@ -103,12 +121,21 @@ size_t writeCallback(char *contents, size_t size, size_t nmemb, void *userp) {
     return realSize;
 }
 
-std::optional<HttpResponse> fetchRoot(const std::string &url, bool biometricRequired) {
+bool isCanceledMessage(const std::string &message) {
+    const std::string lowered = toLower(message);
+    return lowered.find("canceled") != std::string::npos || lowered.find("cancelled") != std::string::npos;
+}
+
+FetchRootResult fetchRoot(const std::string &url, bool biometricRequired, bool debugMode, const std::string &dialogIconPath) {
     if (biometricRequired) {
         std::string authError;
-        if (!biometric::authorizeRequest("Authenticate to prove identity", authError)) {
+        if (!biometric::authorizeRequest("Authenticate to prove identity", debugMode, dialogIconPath, authError)) {
+            if (isCanceledMessage(authError)) {
+                return {FetchRootStatus::AuthCanceled, std::nullopt, authError};
+            }
+
             logger::warning("Biometric authentication failed: " + authError);
-            return std::nullopt;
+            return {FetchRootStatus::Failed, std::nullopt, authError};
         }
         logger::system("Biometric authentication successful.");
     }
@@ -116,7 +143,7 @@ std::optional<HttpResponse> fetchRoot(const std::string &url, bool biometricRequ
     CURL *curl = curl_easy_init();
     if (!curl) {
         logger::fatal("Failed to initialize curl");
-        return std::nullopt;
+        return {FetchRootStatus::Failed, std::nullopt, "Failed to initialize curl"};
     }
 
     HttpResponse response;
@@ -137,20 +164,22 @@ std::optional<HttpResponse> fetchRoot(const std::string &url, bool biometricRequ
 
     const CURLcode result = curl_easy_perform(curl);
     if (result != CURLE_OK) {
-        logger::error(std::string("Request failed: ") + curl_easy_strerror(result));
+        const std::string error = std::string("Request failed: ") + curl_easy_strerror(result);
+        logger::error(error);
         curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
-        return std::nullopt;
+        return {FetchRootStatus::Failed, std::nullopt, error};
     }
 
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response.statusCode);
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
-    return response;
+    return {FetchRootStatus::Success, response, {}};
 }
 
 int main() {
     curl_global_init(CURL_GLOBAL_DEFAULT);
+    biometric::initializeUiHost();
     logger::information("NoriID client started.");
 
     const std::string envPath = "data/.env";
@@ -165,24 +194,34 @@ int main() {
 
     logger::api("Connecting to " + url.str());
 
-    const auto response = fetchRoot(url.str(), config->biometricRequired);
-    if (!response) {
+    const FetchRootResult fetchResult = fetchRoot(url.str(), config->biometricRequired, config->debugMode, config->dialogIconPath);
+    if (fetchResult.status == FetchRootStatus::AuthCanceled) {
+        logger::fatal("Authentication canceled. Ending process normally.");
+        curl_global_cleanup();
+        return 0;
+    }
+
+    if (fetchResult.status != FetchRootStatus::Success || !fetchResult.response) {
         curl_global_cleanup();
         logger::error("Failed to fetch root request.");
         return 1;
     }
 
-    if (response->statusCode < 200 || response->statusCode >= 300) {
-        logger::warning("Server returned HTTP " + std::to_string(response->statusCode));
+    const HttpResponse &response = *fetchResult.response;
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+        logger::warning("Server returned HTTP " + std::to_string(response.statusCode));
         curl_global_cleanup();
-        logger::error(std::string("Failed to fetch root request: ") + response->body);
+        logger::error(std::string("Failed to fetch root request: ") + response.body);
         return 1;
     }
 
     try {
-        const nlohmann::json jsonResponse = nlohmann::json::parse(response->body);
-        logger::response("HTTP " + std::to_string(response->statusCode) + " JSON response:");
-        logger::information(jsonResponse.dump(2));
+        const nlohmann::json jsonResponse = nlohmann::json::parse(response.body);
+        const std::string prettyJson = jsonResponse.dump(2);
+        logger::response("HTTP " + std::to_string(response.statusCode) + " JSON response:");
+        logger::information(prettyJson);
+        biometric::showJsonResponseWindow(prettyJson, config->dialogIconPath);
     } catch (const nlohmann::json::parse_error &err) {
         logger::error(std::string("Failed to parse JSON: ") + err.what());
         curl_global_cleanup();
