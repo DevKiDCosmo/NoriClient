@@ -121,21 +121,14 @@ size_t writeCallback(char *contents, size_t size, size_t nmemb, void *userp) {
     return realSize;
 }
 
-bool isCanceledMessage(const std::string &message) {
-    const std::string lowered = toLower(message);
-    return lowered.find("canceled") != std::string::npos || lowered.find("cancelled") != std::string::npos;
-}
-
 FetchRootResult fetchRoot(const std::string &url, bool biometricRequired, bool debugMode, const std::string &dialogIconPath) {
     if (biometricRequired) {
-        std::string authError;
-        if (!biometric::authorizeRequest("Authenticate to prove identity", debugMode, dialogIconPath, authError)) {
-            if (isCanceledMessage(authError)) {
-                return {FetchRootStatus::AuthCanceled, std::nullopt, authError};
-            }
-
-            logger::warning("Biometric authentication failed: " + authError);
-            return {FetchRootStatus::Failed, std::nullopt, authError};
+        const biometric::AuthResult authResult = biometric::authorizeRequest("Authenticate to prove identity", debugMode, dialogIconPath);
+        if (authResult == biometric::AuthResult::Canceled) {
+            return {FetchRootStatus::AuthCanceled, std::nullopt, "Authentication canceled by user."};
+        }
+        if (authResult != biometric::AuthResult::Success) {
+            return {FetchRootStatus::Failed, std::nullopt, "Authentication failed."};
         }
         logger::system("Biometric authentication successful.");
     }

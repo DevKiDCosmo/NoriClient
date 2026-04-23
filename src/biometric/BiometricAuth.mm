@@ -13,8 +13,6 @@
 namespace biometric {
 
 namespace {
-constexpr const char *kFallbackId = "demo-id";
-constexpr const char *kFallbackPassword = "demo-password";
 bool gUiHostInitialized = false;
 
 NSImage *resolveDialogIcon(const std::string &dialogIconPath);
@@ -122,7 +120,6 @@ bool waitForSemaphoreWithRunLoop(dispatch_semaphore_t semaphore, NSTimeInterval 
 }
 
 enum class CredentialsDialogAction {
-    Authenticated,
     Canceled,
     UseNative,
     Failed
@@ -132,51 +129,64 @@ bool isUserCanceledLaError(NSInteger code) {
     return code == LAErrorUserCancel || code == LAErrorSystemCancel || code == LAErrorAppCancel;
 }
 
-bool authenticateWithNativeMacLogin(std::string &errorMessage) {
-    return runOnMainThread([&errorMessage] {
-      prepareAuthDialogHost();
+// Must be called from the main thread.
+AuthResult authenticateWithNativeMacLogin() {
+    NSCAssert([NSThread isMainThread], @"authenticateWithNativeMacLogin must be called on the main thread");
+    prepareAuthDialogHost();
 
-      LAContext *nativeContext = [[LAContext alloc] init];
-      // Allow device password/PIN fallback in the native system dialog.
-      nativeContext.localizedFallbackTitle = @"Use Password";
+    LAContext *nativeContext = [[LAContext alloc] init];
+    // Allow device password/PIN fallback in the native system dialog.
+    nativeContext.localizedFallbackTitle = @"Use Password";
 
-      NSError *policyError = nil;
-      const LAPolicy nativePolicy = LAPolicyDeviceOwnerAuthentication;
-      if (![nativeContext canEvaluatePolicy:nativePolicy error:&policyError]) {
-          errorMessage = nsErrorToString(policyError);
-          return false;
-      }
+    NSError *policyError = nil;
+    const LAPolicy nativePolicy = LAPolicyDeviceOwnerAuthentication;
+    if (![nativeContext canEvaluatePolicy:nativePolicy error:&policyError]) {
+        const std::string msg = nsErrorToString(policyError);
+        logger::warning("Native macOS login unavailable: " + msg);
+        return AuthResult::Failed;
+    }
 
-      __block BOOL success = NO;
-      __block std::string callbackErrorMessage;
-      dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+    __block BOOL success = NO;
+    __block std::string callbackErrorMessage;
+    __block NSInteger callbackErrorCode = 0;
+    __block bool hasCallbackErrorCode = false;
+    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
 
-      [nativeContext evaluatePolicy:nativePolicy
-                    localizedReason:@"Authenticate with native macOS login to continue."
-                              reply:^(BOOL evaluated, NSError *_Nullable evaluateError) {
-                                  success = evaluated;
-                                  if (!evaluated) {
-                                      callbackErrorMessage = nsErrorToString(evaluateError);
-                                  }
-                                  dispatch_semaphore_signal(semaphore);
-                              }];
+    [nativeContext evaluatePolicy:nativePolicy
+                  localizedReason:@"Authenticate with native macOS login to continue."
+                            reply:^(BOOL evaluated, NSError *_Nullable evaluateError) {
+                                success = evaluated;
+                                if (!evaluated) {
+                                    callbackErrorMessage = nsErrorToString(evaluateError);
+                                    if (evaluateError != nil &&
+                                        [[evaluateError domain] isEqualToString:LAErrorDomain]) {
+                                        callbackErrorCode = [evaluateError code];
+                                        hasCallbackErrorCode = true;
+                                    }
+                                }
+                                dispatch_semaphore_signal(semaphore);
+                            }];
 
-      if (!waitForSemaphoreWithRunLoop(semaphore, 45.0)) {
-          errorMessage = "Native macOS login timed out.";
-          return false;
-      }
+    if (!waitForSemaphoreWithRunLoop(semaphore, 45.0)) {
+        logger::warning("Native macOS login timed out.");
+        return AuthResult::Failed;
+    }
 
-      if (!success) {
-          errorMessage = callbackErrorMessage.empty() ? "Native macOS login failed." : callbackErrorMessage;
-          return false;
-      }
+    if (!success) {
+        if (hasCallbackErrorCode && isUserCanceledLaError(callbackErrorCode)) {
+            logger::information("Native macOS login canceled by user.");
+            return AuthResult::Canceled;
+        }
+        const std::string msg = callbackErrorMessage.empty() ? "Native macOS login failed." : callbackErrorMessage;
+        logger::warning("Native macOS login failed: " + msg);
+        return AuthResult::Failed;
+    }
 
-      return true;
-    });
+    return AuthResult::Success;
 }
 
-CredentialsDialogAction promptCustomCredentials(bool debugMode, const std::string &dialogIconPath, std::string &errorMessage) {
-    return runOnMainThread([debugMode, &dialogIconPath, &errorMessage] {
+CredentialsDialogAction promptCustomCredentials(bool debugMode, const std::string &dialogIconPath) {
+    return runOnMainThread([debugMode, &dialogIconPath] {
       prepareAuthDialogHost();
 
       NSAlert *alert = [[NSAlert alloc] init];
@@ -224,18 +234,12 @@ CredentialsDialogAction promptCustomCredentials(bool debugMode, const std::strin
       }
 
       if (response != NSAlertFirstButtonReturn) {
-          errorMessage = "Password authentication canceled.";
           return CredentialsDialogAction::Canceled;
       }
 
-      const std::string inputId = [[idField stringValue] UTF8String] ? [[idField stringValue] UTF8String] : "";
-      const std::string inputPassword = [[passwordField stringValue] UTF8String] ? [[passwordField stringValue] UTF8String] : "";
-
-      if (inputId == kFallbackId && inputPassword == kFallbackPassword) {
-          return CredentialsDialogAction::Authenticated;
-      }
-
-      errorMessage = "Invalid ID or password.";
+      // Credential validation requires server-side implementation.
+      // Client-side credential checks have been removed for security.
+      logger::warning("Credential fallback is not available: server-side validation required.");
       return CredentialsDialogAction::Failed;
     });
 }
@@ -283,15 +287,16 @@ void showJsonResponseWindow(const std::string &jsonText, const std::string &appI
     });
 }
 
-bool authorizeRequest(const std::string &reason, bool debugMode, const std::string &dialogIconPath, std::string &errorMessage) {
+AuthResult authorizeRequest(const std::string &reason, bool debugMode, const std::string &dialogIconPath) {
     @autoreleasepool {
         LAContext *context = [[LAContext alloc] init];
         NSError *policyError = nil;
         const LAPolicy policy = LAPolicyDeviceOwnerAuthenticationWithBiometrics;
 
         if (![context canEvaluatePolicy:policy error:&policyError]) {
-            errorMessage = nsErrorToString(policyError);
-            return false;
+            const std::string msg = nsErrorToString(policyError);
+            logger::warning("Biometric authentication unavailable: " + msg);
+            return AuthResult::Failed;
         }
 
         NSString *localizedReason = [NSString stringWithUTF8String:reason.c_str()];
@@ -321,62 +326,47 @@ bool authorizeRequest(const std::string &reason, bool debugMode, const std::stri
                           }];
 
         if (!waitForSemaphoreWithRunLoop(semaphore, 30.0)) {
-            errorMessage = "Biometric authentication timed out.";
-            return false;
+            logger::warning("Biometric authentication timed out.");
+            return AuthResult::Failed;
         }
 
         if (!success) {
             if (hasCallbackErrorCode && isUserCanceledLaError(callbackErrorCode)) {
-                errorMessage = callbackErrorMessage.empty() ? "Biometric authentication canceled." : callbackErrorMessage;
+                logger::information("Biometric authentication canceled by user.");
                 runOnMainThread([] {
                   sendAuthUiToBackground();
                   return true;
                 });
-                return false;
+                return AuthResult::Canceled;
             }
 
-            const CredentialsDialogAction action = promptCustomCredentials(debugMode, dialogIconPath, errorMessage);
+            logger::warning("Biometric authentication failed: " + callbackErrorMessage);
+
+            const CredentialsDialogAction action = promptCustomCredentials(debugMode, dialogIconPath);
+
             if (action == CredentialsDialogAction::UseNative) {
-                if (authenticateWithNativeMacLogin(errorMessage)) {
+                const AuthResult nativeResult = authenticateWithNativeMacLogin();
+                if (nativeResult == AuthResult::Success) {
                     logger::system("Native macOS login successful.");
-                    runOnMainThread([] {
-                      sendAuthUiToBackground();
-                      return true;
-                    });
-                    return true;
                 }
-                logger::warning("Native macOS login failed.");
                 runOnMainThread([] {
                   sendAuthUiToBackground();
                   return true;
                 });
-                return false;
+                return nativeResult;
             }
 
-            if (action == CredentialsDialogAction::Authenticated) {
-                logger::system("Password fallback authentication successful.");
-                runOnMainThread([] {
-                  sendAuthUiToBackground();
-                  return true;
-                });
-                return true;
-            }
-
-            if (action == CredentialsDialogAction::Failed) {
-                logger::warning("Password fallback authentication failed.");
-                runOnMainThread([] {
-                  sendAuthUiToBackground();
-                  return true;
-                });
-                return false;
-            }
-
-            errorMessage = callbackErrorMessage.empty() ? "Biometric authentication canceled." : callbackErrorMessage;
             runOnMainThread([] {
               sendAuthUiToBackground();
               return true;
             });
-            return false;
+
+            if (action == CredentialsDialogAction::Canceled) {
+                return AuthResult::Canceled;
+            }
+
+            // CredentialsDialogAction::Failed
+            return AuthResult::Failed;
         }
 
         runOnMainThread([] {
@@ -384,7 +374,7 @@ bool authorizeRequest(const std::string &reason, bool debugMode, const std::stri
           return true;
         });
 
-        return true;
+        return AuthResult::Success;
     }
 }
 
