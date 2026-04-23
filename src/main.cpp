@@ -106,8 +106,8 @@ size_t writeCallback(char *contents, size_t size, size_t nmemb, void *userp) {
 std::optional<HttpResponse> fetchRoot(const std::string &url, bool biometricRequired) {
     if (biometricRequired) {
         std::string authError;
-        if (!biometric::authorizeRequest("Authenticate to send this request.", authError)) {
-            logger::fatal("Biometric authentication failed: " + authError);
+        if (!biometric::authorizeRequest("Authenticate to prove identity", authError)) {
+            logger::warning("Biometric authentication failed: " + authError);
             return std::nullopt;
         }
         logger::system("Biometric authentication successful.");
@@ -128,14 +128,23 @@ std::optional<HttpResponse> fetchRoot(const std::string &url, bool biometricRequ
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response.body);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "NoriID/1.0");
 
+    // Custom header
+    struct curl_slist *headers = nullptr;
+    headers = curl_slist_append(headers, "X-NoriID-Client: true");
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers = curl_slist_append(headers, "X-Request-Source: desktop");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
     const CURLcode result = curl_easy_perform(curl);
     if (result != CURLE_OK) {
         logger::error(std::string("Request failed: ") + curl_easy_strerror(result));
+        curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
         return std::nullopt;
     }
 
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response.statusCode);
+    curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
     return response;
 }
@@ -159,12 +168,14 @@ int main() {
     const auto response = fetchRoot(url.str(), config->biometricRequired);
     if (!response) {
         curl_global_cleanup();
+        logger::error("Failed to fetch root request.");
         return 1;
     }
 
     if (response->statusCode < 200 || response->statusCode >= 300) {
         logger::warning("Server returned HTTP " + std::to_string(response->statusCode));
         curl_global_cleanup();
+        logger::error(std::string("Failed to fetch root request: ") + response->body);
         return 1;
     }
 

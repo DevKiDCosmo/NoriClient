@@ -21,7 +21,7 @@ add_executable(NoriID src/main.cpp
 
 if(APPLE)
 	target_sources(NoriID PRIVATE src/biometric/BiometricAuth.mm)
-	target_link_libraries(NoriID PRIVATE "-framework LocalAuthentication" "-framework Foundation")
+	target_link_libraries(NoriID PRIVATE "-framework AppKit" "-framework LocalAuthentication" "-framework Foundation")
 else()
 	target_sources(NoriID PRIVATE src/biometric/BiometricAuth_stub.cpp)
 endif()
