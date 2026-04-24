@@ -183,7 +183,7 @@ int main() {
     }
 
     std::ostringstream url;
-    url << "https://" << config->server << ':' << config->port << '/';
+    url << "https://" << config->server << ':' << config->port << "/api/v0.1";
 
     logger::api("Connecting to " + url.str());
 
