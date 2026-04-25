@@ -15,13 +15,21 @@ FetchContent_MakeAvailable(nlohmann_json)
 
 find_package(CURL REQUIRED)
 
-add_executable(NoriID src/main.cpp
+add_executable(NoriID MACOSX_BUNDLE src/main.cpp
 		src/logs/logger.cpp
-		src/logs/logger.h)
+		src/logs/logger.h
+		src/biometric/auth-id/IDFallback.cpp
+		src/biometric/auth-id/IDFallback.h
+		src/defines/defines.h)
+
+set_target_properties(NoriID PROPERTIES
+	MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist"
+)
 
 if(APPLE)
 	target_sources(NoriID PRIVATE src/biometric/BiometricAuth.mm)
-	target_link_libraries(NoriID PRIVATE "-framework AppKit" "-framework LocalAuthentication" "-framework Foundation")
+	target_sources(NoriID PRIVATE src/ui/AppController.mm)
+	target_link_libraries(NoriID PRIVATE "-framework AppKit" "-framework LocalAuthentication" "-framework Foundation" "-framework Security")
 else()
 	target_sources(NoriID PRIVATE src/biometric/BiometricAuth_stub.cpp)
 endif()

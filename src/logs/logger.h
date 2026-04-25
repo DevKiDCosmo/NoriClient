@@ -31,6 +31,9 @@ public:
 	static void hint(std::string_view message);
 	static void important(std::string_view message);
 
+	static void fallback(std::string_view message);
+	static void debug(std::string_view message);
+
 private:
 	static const char *label(LogType type);
 	static const char *color(LogType type);

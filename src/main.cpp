@@ -2,7 +2,9 @@
 #include <nlohmann/json.hpp>
 
 #include "biometric/BiometricAuth.h"
+#include "ui/AppController.h"
 #include "logs/logger.h"
+#include "defines/defines.h"
 
 #include <algorithm>
 #include <cctype>
@@ -17,6 +19,7 @@ struct EnvConfig {
     bool biometricRequired = true;
     bool debugMode = false;
     std::string dialogIconPath;
+    std::string appIconPath;
 };
 
 struct HttpResponse {
@@ -103,6 +106,8 @@ std::optional<EnvConfig> loadEnvConfig(const std::string &envPath) {
             config.debugMode = (toLower(value) == "debug");
         } else if (key == "dialog_icon_path") {
             config.dialogIconPath = value;
+        } else if (key == "app_icon_path") {
+            config.appIconPath = value;
         }
     }
 
@@ -121,16 +126,127 @@ size_t writeCallback(char *contents, size_t size, size_t nmemb, void *userp) {
     return realSize;
 }
 
+struct ParsedUri {
+    std::string scheme;
+    std::string host;
+    std::string port;
+    std::string path;
+    std::string query;
+};
+
+ParsedUri parseUri(const std::string &uri) {
+    ParsedUri parsed;
+    const auto schemePos = uri.find("://");
+    if (schemePos == std::string::npos) {
+        return parsed;
+    }
+
+    parsed.scheme = toLower(uri.substr(0, schemePos));
+    const std::string remainder = uri.substr(schemePos + 3);
+    const auto pathPos = remainder.find('/');
+    const std::string authority = pathPos == std::string::npos ? remainder : remainder.substr(0, pathPos);
+    const std::string pathAndQuery = pathPos == std::string::npos ? std::string{} : remainder.substr(pathPos);
+
+    const auto colonPos = authority.rfind(':');
+    if (colonPos != std::string::npos && colonPos + 1 < authority.size()) {
+        parsed.host = authority.substr(0, colonPos);
+        parsed.port = authority.substr(colonPos + 1);
+    } else {
+        parsed.host = authority;
+    }
+
+    const auto queryPos = pathAndQuery.find('?');
+    parsed.path = queryPos == std::string::npos ? pathAndQuery : pathAndQuery.substr(0, queryPos);
+    parsed.query = queryPos == std::string::npos ? std::string{} : pathAndQuery.substr(queryPos + 1);
+    return parsed;
+}
+
+std::string buildOpenPortsSummary(const EnvConfig &config) {
+    std::ostringstream summary;
+    summary << "Version: " << VERSION << '\n'
+            << "Version name: " << VERSION_NAME << '\n'
+            << COPYRIGHT << '\n'
+            << "API endpoint: https://" << config.server << ':' << config.port << "/api/v0.1\n"
+            << "URI scheme: nori-slk://host[:port]/auth\n"
+            << "Callback scheme: nori-api://";
+    return summary.str();
+}
+
+FetchRootResult fetchRoot(const std::string &url, bool biometricRequired, bool debugMode, const std::string &dialogIconPath);
+
+void processUri(const std::string &uri, const EnvConfig &config) {
+    const ParsedUri parsed = parseUri(uri);
+    if (parsed.scheme.empty()) {
+        logger::warning("Unsupported URI: " + uri);
+        return;
+    }
+
+    if (parsed.scheme == "nori-slk") {
+        logger::socket("Received nori-slk URI: " + uri);
+        if (!parsed.host.empty()) {
+            logger::socket("nori-slk source host: " + parsed.host + (parsed.port.empty() ? std::string{} : (std::string(":") + parsed.port)));
+        }
+        if (!parsed.path.empty()) {
+            logger::socket("nori-slk source path: " + parsed.path);
+        }
+
+        std::ostringstream target;
+        //target << "https://" << config.server << ':' << config.port;
+        target << "http://" << parsed.host << ":" << parsed.port << parsed.path;
+        logger::api(target.str());
+
+        const FetchRootResult fetchResult = fetchRoot(target.str(), config.biometricRequired, config.debugMode, config.dialogIconPath);
+        if (fetchResult.status == FetchRootStatus::AuthCanceled) {
+            logger::fatal("Authentication canceled. Request aborted.");
+            return;
+        }
+
+        if (fetchResult.status != FetchRootStatus::Success || !fetchResult.response) {
+            logger::error("Failed to fetch nori-slk request.");
+            biometric::showJsonResponseWindow("Failed to fetch nori-slk request.", config.appIconPath.empty() ? config.dialogIconPath : config.appIconPath);
+            return;
+        }
+
+        const HttpResponse &response = *fetchResult.response;
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+            logger::warning("nori-slk request returned HTTP " + std::to_string(response.statusCode));
+            biometric::showJsonResponseWindow(response.body, config.appIconPath.empty() ? config.dialogIconPath : config.appIconPath);
+            return;
+        }
+
+        try {
+            const nlohmann::json jsonResponse = nlohmann::json::parse(response.body);
+            const std::string prettyJson = jsonResponse.dump(2);
+            logger::response("nori-slk JSON response received.");
+            biometric::showJsonResponseWindow(prettyJson, config.appIconPath.empty() ? config.dialogIconPath : config.appIconPath);
+        } catch (const nlohmann::json::parse_error &err) {
+            logger::error(std::string("Failed to parse nori-slk JSON: ") + err.what());
+            biometric::showJsonResponseWindow(response.body, config.appIconPath.empty() ? config.dialogIconPath : config.appIconPath);
+        }
+        return;
+    }
+
+    if (parsed.scheme == "nori-api") {
+        logger::api("Received nori-api URI: " + uri);
+        ui::showInfoWindow();
+        return;
+    }
+
+    logger::warning("Unknown URI scheme: " + parsed.scheme);
+}
+
 FetchRootResult fetchRoot(const std::string &url, bool biometricRequired, bool debugMode, const std::string &dialogIconPath) {
     if (biometricRequired) {
         const biometric::AuthResult authResult = biometric::authorizeRequest("Authenticate to prove identity", debugMode, dialogIconPath);
-        if (authResult == biometric::AuthResult::Canceled) {
+        if (authResult == biometric::AuthResult::Canceled || authResult == biometric::AuthResult::Failed) {
             return {FetchRootStatus::AuthCanceled, std::nullopt, "Authentication canceled by user."};
         }
         if (authResult != biometric::AuthResult::Success) {
             return {FetchRootStatus::Failed, std::nullopt, "Authentication failed."};
         }
         logger::system("Biometric authentication successful.");
+    } else {
+        logger::hint("Authentication disabled.");
     }
 
     CURL *curl = curl_easy_init();
@@ -170,10 +286,10 @@ FetchRootResult fetchRoot(const std::string &url, bool biometricRequired, bool d
     return {FetchRootStatus::Success, response, {}};
 }
 
-int main() {
+int main(int argc, char *argv[]) {
     curl_global_init(CURL_GLOBAL_DEFAULT);
-    biometric::initializeUiHost();
     logger::information("NoriID client started.");
+    // logger::information("VERSION: " + VERSION);
 
     const std::string envPath = "data/.env";
     const auto config = loadEnvConfig(envPath);
@@ -182,46 +298,24 @@ int main() {
         return 1;
     }
 
-    std::ostringstream url;
-    url << "https://" << config->server << ':' << config->port << "/api/v0.1";
+    biometric::initializeUiHost();
 
-    logger::api("Connecting to " + url.str());
+    const std::string version = std::string(VERSION) + " " + std::string(VERSION_NAME);
+    const std::string openPorts = buildOpenPortsSummary(*config);
 
-    const FetchRootResult fetchResult = fetchRoot(url.str(), config->biometricRequired, config->debugMode, config->dialogIconPath);
-    if (fetchResult.status == FetchRootStatus::AuthCanceled) {
-        logger::fatal("Authentication canceled. Ending process normally.");
-        curl_global_cleanup();
-        return 0;
+    ui::installAppController(version, openPorts, config->appIconPath, [config](const std::string &uri) {
+        processUri(uri, *config);
+    });
+
+    logger::important("Background service ready. Click the lock icon for details.");
+
+    if (argc > 1) {
+        for (int index = 1; index < argc; ++index) {
+            processUri(argv[index], *config);
+        }
     }
 
-    if (fetchResult.status != FetchRootStatus::Success || !fetchResult.response) {
-        curl_global_cleanup();
-        logger::error("Failed to fetch root request.");
-        return 1;
-    }
-
-    const HttpResponse &response = *fetchResult.response;
-
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-        logger::warning("Server returned HTTP " + std::to_string(response.statusCode));
-        curl_global_cleanup();
-        logger::error(std::string("Failed to fetch root request: ") + response.body);
-        return 1;
-    }
-
-    try {
-        const nlohmann::json jsonResponse = nlohmann::json::parse(response.body);
-        const std::string prettyJson = jsonResponse.dump(2);
-        logger::response("HTTP " + std::to_string(response.statusCode) + " JSON response:");
-        logger::information(prettyJson);
-        biometric::showJsonResponseWindow(prettyJson, config->dialogIconPath);
-    } catch (const nlohmann::json::parse_error &err) {
-        logger::error(std::string("Failed to parse JSON: ") + err.what());
-        curl_global_cleanup();
-        return 1;
-    }
-
-    logger::important("Request completed successfully.");
+    ui::runApplication();
     curl_global_cleanup();
     return 0;
 }

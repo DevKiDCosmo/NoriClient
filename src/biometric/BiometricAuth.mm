@@ -120,6 +120,7 @@ bool waitForSemaphoreWithRunLoop(dispatch_semaphore_t semaphore, NSTimeInterval 
 }
 
 enum class CredentialsDialogAction {
+    Success,
     Canceled,
     UseNative,
     Failed
@@ -212,6 +213,7 @@ CredentialsDialogAction promptCustomCredentials(bool debugMode, const std::strin
       [idLabel setDrawsBackground:NO];
 
       NSTextField *idField = [[NSTextField alloc] initWithFrame:NSMakeRect(80, 28, 220, 24)];
+      // [idField setStringValue:@"testuser"]; Adding placeholder later or not.
 
       NSTextField *passwordLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 2, 70, 22)];
       [passwordLabel setStringValue:@"Password:"];
@@ -221,6 +223,7 @@ CredentialsDialogAction promptCustomCredentials(bool debugMode, const std::strin
       [passwordLabel setDrawsBackground:NO];
 
       NSSecureTextField *passwordField = [[NSSecureTextField alloc] initWithFrame:NSMakeRect(80, 0, 220, 24)];
+      // [passwordField setStringValue:@"password"];
 
       [container addSubview:idLabel];
       [container addSubview:idField];
@@ -232,6 +235,18 @@ CredentialsDialogAction promptCustomCredentials(bool debugMode, const std::strin
       if (debugMode && response == NSAlertThirdButtonReturn) {
           return CredentialsDialogAction::UseNative;
       }
+
+       if (response == NSAlertFirstButtonReturn) {
+           // TODO: HARD coded value are used for demonstration purposes
+           const std::string inputId = [[idField stringValue] UTF8String] ? [[idField stringValue] UTF8String] : "";
+           const std::string inputPassword = [[passwordField stringValue] UTF8String] ? [[passwordField stringValue] UTF8String] : "";
+            // logger::debug("Typen: " + inputId + " " + inputPassword); TODO: Adding to logger environment declaration system to global access.
+
+           if ([idField.stringValue isEqualToString:@"123"] && [passwordField.stringValue isEqualToString:@"123"]) {
+               logger::system("Custom credential verification successful (debug mode).");
+               return CredentialsDialogAction::Success;
+           }
+       }
 
       if (response != NSAlertFirstButtonReturn) {
           return CredentialsDialogAction::Canceled;
@@ -291,7 +306,7 @@ AuthResult authorizeRequest(const std::string &reason, bool debugMode, const std
     @autoreleasepool {
         LAContext *context = [[LAContext alloc] init];
         NSError *policyError = nil;
-        const LAPolicy policy = LAPolicyDeviceOwnerAuthenticationWithBiometrics;
+        const LAPolicy policy = LAPolicyDeviceOwnerAuthenticationWithBiometrics; // ! Don't change to LAPolicyDeviceOwnerAuthentication.
 
         if (![context canEvaluatePolicy:policy error:&policyError]) {
             const std::string msg = nsErrorToString(policyError);
@@ -342,6 +357,7 @@ AuthResult authorizeRequest(const std::string &reason, bool debugMode, const std
 
             logger::warning("Biometric authentication failed: " + callbackErrorMessage);
 
+            // !! This is the ID call goto.
             const CredentialsDialogAction action = promptCustomCredentials(debugMode, dialogIconPath);
 
             if (action == CredentialsDialogAction::UseNative) {
@@ -354,6 +370,14 @@ AuthResult authorizeRequest(const std::string &reason, bool debugMode, const std
                   return true;
                 });
                 return nativeResult;
+            }
+
+            if (action == CredentialsDialogAction::Success) {
+                runOnMainThread([] {
+                    sendAuthUiToBackground();
+                    return true;
+                });
+                return AuthResult::Success;
             }
 
             runOnMainThread([] {
@@ -380,4 +404,3 @@ AuthResult authorizeRequest(const std::string &reason, bool debugMode, const std
 
 } // namespace biometric
 #endif
-
