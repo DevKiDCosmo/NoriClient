@@ -88,6 +88,10 @@ void logger::important(const std::string_view message) {
 	log(LogType::Important, message);
 }
 
+void logger::init(const std::string_view message) {
+	log(LogType::Init, message);
+}
+
 const char *logger::label(const LogType type) {
 	switch (type) {
 		case LogType::Information:
@@ -110,6 +114,8 @@ const char *logger::label(const LogType type) {
 			return "HINT";
 		case LogType::Important:
 			return "IMPORTANT";
+		case LogType::Init:
+			return "INIT";
 	}
 
 	return "UNKNOWN";
@@ -137,6 +143,8 @@ const char *logger::color(const LogType type) {
 			return "\033[96m";
 		case LogType::Important:
 			return "\033[1;93m";
+		case LogType::Init:
+			return "\033[1;95m";
 	}
 
 	return "\033[37m";

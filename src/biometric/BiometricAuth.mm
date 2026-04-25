@@ -190,6 +190,8 @@ CredentialsDialogAction promptCustomCredentials(bool debugMode, const std::strin
     return runOnMainThread([debugMode, &dialogIconPath] {
       prepareAuthDialogHost();
 
+       // TODO: Add disabled button if any field is empty. Also add error windows like "Invalid credentials" and "Server error, try again later" for better UX. For now, this is just a demo of custom credential dialog. Also add retry. If wrong credentials add new window with retry or cancel. Also add time for next login if logins seem suspicious.
+
       NSAlert *alert = [[NSAlert alloc] init];
       [alert setMessageText:@"Password verification"];
       [alert setInformativeText:@"Enter ID and password to continue this request. Login via biometrics failed. The use of user password is prohibited."];
@@ -278,6 +280,7 @@ void showJsonResponseWindow(const std::string &jsonText, const std::string &appI
       if (dialogIcon != nil) {
           [alert setIcon:dialogIcon];
       }
+        // TODO: Close button don't actual remove icon from taskbar.
       [alert addButtonWithTitle:@"Close"];
 
       NSScrollView *scrollView = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 560, 300)];

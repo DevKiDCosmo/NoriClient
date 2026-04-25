@@ -38,6 +38,22 @@
 				<string>nori-api</string>
 			</array>
 		</dict>
+		<dict>
+            <key>CFBundleURLName</key>
+            <string>NoriID Request Scheme</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>nori-request</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>NoriID Auth Scheme</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>nori-auth</string>
+            </array>
+        </dict>
 	</array>
 </dict>
 </plist>

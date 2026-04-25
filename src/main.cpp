@@ -116,6 +116,18 @@ std::optional<EnvConfig> loadEnvConfig(const std::string &envPath) {
         return std::nullopt;
     }
 
+    logger::init("Configuration loaded successfully.");
+    logger::init("- Server: " + config.server);
+    logger::init("- Port: " + config.port);
+    logger::init("- Biometric Required: " + std::string(config.biometricRequired ? "true" : "false"));
+    logger::init("- Debug Mode: " + std::string(config.debugMode ? "true" : "false"));
+    if (!config.dialogIconPath.empty()) {
+        logger::init("- Dialog Icon: " + config.dialogIconPath);
+    }
+    if (!config.appIconPath.empty()) {
+        logger::init("- App Icon: " + config.appIconPath);
+    }
+
     return config;
 }
 
@@ -168,7 +180,9 @@ std::string buildOpenPortsSummary(const EnvConfig &config) {
             << COPYRIGHT << '\n'
             << "API endpoint: https://" << config.server << ':' << config.port << "/api/v0.1\n"
             << "URI scheme: nori-slk://host[:port]/auth\n"
-            << "Callback scheme: nori-api://";
+            << "Callback scheme: nori-api://\n"
+            << "Auth scheme: nori-auth://\n"
+            << "Request scheme: nori-request://\n";
     return summary.str();
 }
 
@@ -229,6 +243,19 @@ void processUri(const std::string &uri, const EnvConfig &config) {
     if (parsed.scheme == "nori-api") {
         logger::api("Received nori-api URI: " + uri);
         ui::showInfoWindow();
+        return;
+    }
+
+    if (parsed.scheme == "nori-auth") {
+        logger::warning("Received nori-auth URI: " + uri);
+        ui::showInfoWindow();
+
+        return;
+    }
+
+    if (parsed.scheme == "nori-request") {
+        logger::warning("Received nori-request URI: " + uri);
+        ui::showInfoWindow(); // Not implemented
         return;
     }
 
@@ -303,6 +330,7 @@ int main(int argc, char *argv[]) {
     const std::string version = std::string(VERSION) + " " + std::string(VERSION_NAME);
     const std::string openPorts = buildOpenPortsSummary(*config);
 
+    // ! TODO: AppIconPath or the image cannot be applied.
     ui::installAppController(version, openPorts, config->appIconPath, [config](const std::string &uri) {
         processUri(uri, *config);
     });
