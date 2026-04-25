@@ -547,6 +547,8 @@ void processUri(const std::string &uri, const EnvConfig &config) {
                         logger::error(std::string("Failed to parse nori-api JSON: ") + err.what());
                         biometric::showJsonResponseWindow(response.body, config.appIconPath.empty() ? config.dialogIconPath : config.appIconPath);
                     }
+                } else if (*purpose == "registration") {
+                    // This will do client registration.
                 }
             } else {
                 logger::warning("Magic number not found in the URI path.");
