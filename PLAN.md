@@ -19,3 +19,12 @@
 
 - `nori-slk://` - Single Login Key.
 - `nori-request://` - for login related actions, with subtypes for different login methods (e.g., `nori-login://password`, `nori-login://native`).
+
+# Update
+Client download zip and creates script.
+Client runs scripts and kill itself
+Script check every second if client is correctly killed.
+Script remvoe old client and install new client. Extract...
+Script Start new client
+Client notice a script start because of command line `APPLICATION -fresh-install "{localstion of script}"`
+Client remove script.

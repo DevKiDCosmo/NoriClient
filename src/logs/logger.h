@@ -13,7 +13,8 @@ enum class LogType {
 	Fatal,
 	Hint,
 	Important,
-	Init
+	Init,
+	notImplemented
 };
 
 class logger {
@@ -32,6 +33,7 @@ public:
 	static void hint(std::string_view message);
 	static void important(std::string_view message);
 	static void init(std::string_view message);
+	static void notImplemented(std::string_view message);
 
 	static void fallback(std::string_view message);
 	static void debug(std::string_view message);

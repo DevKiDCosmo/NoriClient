@@ -92,6 +92,10 @@ void logger::init(const std::string_view message) {
 	log(LogType::Init, message);
 }
 
+void logger::notImplemented(const std::string_view message) {
+	log(LogType::notImplemented, message);
+}
+
 const char *logger::label(const LogType type) {
 	switch (type) {
 		case LogType::Information:
@@ -116,6 +120,8 @@ const char *logger::label(const LogType type) {
 			return "IMPORTANT";
 		case LogType::Init:
 			return "INIT";
+		case LogType::notImplemented:
+			return "NOT IMPLEMENTED";
 	}
 
 	return "UNKNOWN";
@@ -145,6 +151,8 @@ const char *logger::color(const LogType type) {
 			return "\033[1;93m";
 		case LogType::Init:
 			return "\033[1;95m";
+		case LogType::notImplemented:
+			return "\033[1;91m";
 	}
 
 	return "\033[37m";
