@@ -5,6 +5,7 @@
 #include "ui/AppController.h"
 #include "logs/logger.h"
 #include "defines/defines.h"
+#include "network/request/miniRequestX.h"
 
 #include <algorithm>
 #include <cctype>
@@ -21,23 +22,6 @@ struct EnvConfig {
     bool debugMode = false;
     std::string dialogIconPath;
     std::string appIconPath;
-};
-
-struct HttpResponse {
-    long statusCode = 0;
-    std::string body;
-};
-
-enum class FetchRootStatus {
-    Success,
-    AuthCanceled,
-    Failed
-};
-
-struct FetchRootResult {
-    FetchRootStatus status = FetchRootStatus::Failed;
-    std::optional<HttpResponse> response;
-    std::string message;
 };
 
 std::string trim(const std::string &value) {
@@ -132,13 +116,6 @@ std::optional<EnvConfig> loadEnvConfig(const std::string &envPath) {
     return config;
 }
 
-size_t writeCallback(char *contents, size_t size, size_t nmemb, void *userp) {
-    const size_t realSize = size * nmemb;
-    auto *body = static_cast<std::string *>(userp);
-    body->append(contents, realSize);
-    return realSize;
-}
-
 struct ParsedUri {
     std::string scheme;
     std::string host;
@@ -189,14 +166,11 @@ std::string urlDecode(const std::string &encoded) {
                 decoded += c;
                 i += 2;
             } catch (const std::invalid_argument &) {
-                // Not a valid hex, append as-is
                 decoded += encoded[i];
             } catch (const std::out_of_range &) {
-                // Not a valid hex, append as-is
                 decoded += encoded[i];
             }
         } else if (encoded[i] == '+') {
-            // In query strings, '+' is often a space.
             decoded += ' ';
         } else {
             decoded += encoded[i];
@@ -436,8 +410,6 @@ std::string cleanPath(const std::string &rawPath) {
     return std::string(rawPath.begin(), endOfPath);
 }
 
-FetchRootResult fetchRoot(const std::string &url, bool biometricRequired, bool debugMode, const std::string &dialogIconPath);
-
 void processUri(const std::string &uri, const EnvConfig &config) {
     const ParsedUri parsed = parseUri(uri);
     if (parsed.scheme.empty()) {
@@ -459,19 +431,19 @@ void processUri(const std::string &uri, const EnvConfig &config) {
         target << "http://" << parsed.host << ":" << parsed.port << parsed.path;
         logger::api(target.str());
 
-        const FetchRootResult fetchResult = fetchRoot(target.str(), config.biometricRequired, config.debugMode, config.dialogIconPath);
-        if (fetchResult.status == FetchRootStatus::AuthCanceled) {
+        const network::request::FetchResult fetchResult = network::request::MiniRequest::fetch(target.str(), config.biometricRequired, config.debugMode, config.dialogIconPath);
+        if (fetchResult.status == network::request::FetchStatus::AuthCanceled) {
             logger::fatal("Authentication canceled. Request aborted.");
             return;
         }
 
-        if (fetchResult.status != FetchRootStatus::Success || !fetchResult.response) {
+        if (fetchResult.status != network::request::FetchStatus::Success || !fetchResult.response) {
             logger::error("Failed to fetch nori-slk request.");
             biometric::showJsonResponseWindow("Failed to fetch nori-slk request.", config.appIconPath.empty() ? config.dialogIconPath : config.appIconPath);
             return;
         }
 
-        const HttpResponse &response = *fetchResult.response;
+        const network::request::HttpResponse &response = *fetchResult.response;
         if (response.statusCode < 200 || response.statusCode >= 300) {
             logger::warning("nori-slk request returned HTTP " + std::to_string(response.statusCode));
             biometric::showJsonResponseWindow(response.body, config.appIconPath.empty() ? config.dialogIconPath : config.appIconPath);
@@ -512,27 +484,26 @@ void processUri(const std::string &uri, const EnvConfig &config) {
                         const biometric::AuthResult authResult = biometric::authorizeRequest("Authenticate to reveal installation.", config.debugMode, config.dialogIconPath);
                         if (authResult != biometric::AuthResult::Success) {
                             logger::warning("Authentication was not successful. Approval action aborted.");
-                            return; // Stop processing
+                            return;
                         }
                         logger::system("Biometric authentication successful.");
                     } else {
                         logger::hint("Authentication disabled.");
                     }
 
-                    // The approval action is to make a web request, similar to nori-slk.
                     const std::string cleanedPath = cleanPath(parsed.path);
                     std::ostringstream target;
                     target << "http://" << parsed.host << ":" << parsed.port << cleanedPath;
                     logger::api("Dispatching nori-api request to: " + target.str());
 
-                    const FetchRootResult fetchResult = fetchRoot(target.str(), false, config.debugMode, config.dialogIconPath);
-                    if (fetchResult.status != FetchRootStatus::Success || !fetchResult.response) {
+                    const network::request::FetchResult fetchResult = network::request::MiniRequest::fetch(target.str(), false, config.debugMode, config.dialogIconPath);
+                    if (fetchResult.status != network::request::FetchStatus::Success || !fetchResult.response) {
                         logger::error("Failed to fetch nori-api request.");
                         biometric::showJsonResponseWindow("Failed to fetch nori-api request.", config.appIconPath.empty() ? config.dialogIconPath : config.appIconPath);
                         return;
                     }
 
-                    const HttpResponse &response = *fetchResult.response;
+                    const network::request::HttpResponse &response = *fetchResult.response;
                     if (response.statusCode < 200 || response.statusCode >= 300) {
                         logger::warning("nori-api request returned HTTP " + std::to_string(response.statusCode));
                         biometric::showJsonResponseWindow(response.body, config.appIconPath.empty() ? config.dialogIconPath : config.appIconPath);
@@ -588,57 +559,6 @@ void processUri(const std::string &uri, const EnvConfig &config) {
     }
 
     logger::warning("Unknown URI scheme: " + parsed.scheme);
-}
-
-FetchRootResult fetchRoot(const std::string &url, bool biometricRequired, bool debugMode, const std::string &dialogIconPath) {
-    if (biometricRequired) {
-        const biometric::AuthResult authResult = biometric::authorizeRequest("Authenticate to prove identity", debugMode, dialogIconPath);
-        if (authResult == biometric::AuthResult::Canceled || authResult == biometric::AuthResult::Failed) {
-            return {FetchRootStatus::AuthCanceled, std::nullopt, "Authentication canceled by user."};
-        }
-        if (authResult != biometric::AuthResult::Success) {
-            return {FetchRootStatus::Failed, std::nullopt, "Authentication failed."};
-        }
-        logger::system("Biometric authentication successful.");
-    } else {
-        logger::hint("Authentication disabled.");
-    }
-
-    CURL *curl = curl_easy_init();
-    if (!curl) {
-        logger::fatal("Failed to initialize curl");
-        return {FetchRootStatus::Failed, std::nullopt, "Failed to initialize curl"};
-    }
-
-    HttpResponse response;
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str()); // NOLINT(cppcoreguidelines-pro-type-vararg)
-    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 20L);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response.body);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "NoriID/1.0");
-
-    // Custom header
-    struct curl_slist *headers = nullptr;
-    headers = curl_slist_append(headers, "X-NoriID-Client: true");
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    headers = curl_slist_append(headers, "X-Request-Source: desktop");
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-
-    const CURLcode result = curl_easy_perform(curl);
-    if (result != CURLE_OK) {
-        const std::string error = std::string("Request failed: ") + curl_easy_strerror(result);
-        logger::error(error);
-        curl_slist_free_all(headers);
-        curl_easy_cleanup(curl);
-        return {FetchRootStatus::Failed, std::nullopt, error};
-    }
-
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response.statusCode);
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    return {FetchRootStatus::Success, response, {}};
 }
 
 int main(int argc, char *argv[]) {
