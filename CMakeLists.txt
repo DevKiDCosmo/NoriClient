@@ -22,7 +22,11 @@ add_executable(NoriID MACOSX_BUNDLE src/main.cpp
 		src/biometric/auth-id/IDFallback.h
 		src/defines/defines.h
 		src/network/request/miniRequestX.cpp
-		src/network/request/miniRequestX.h)
+		src/network/request/miniRequestX.h
+		src/defines/env/env.cpp
+		src/defines/env/env.h
+		src/defines/runtime/runtimeGlobal.cpp
+		src/defines/runtime/runtimeGlobal.h)
 
 set_target_properties(NoriID PROPERTIES
 	MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist"

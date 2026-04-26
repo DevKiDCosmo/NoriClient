@@ -6,6 +6,7 @@
 #include "logs/logger.h"
 #include "defines/defines.h"
 #include "network/request/miniRequestX.h"
+#include "defines/env/env.h"
 
 #include <algorithm>
 #include <cctype>
@@ -15,106 +16,6 @@
 #include <string>
 #include <vector>
 
-struct EnvConfig {
-    std::string server;
-    std::string port;
-    bool biometricRequired = true;
-    bool debugMode = false;
-    std::string dialogIconPath;
-    std::string appIconPath;
-};
-
-std::string trim(const std::string &value) {
-    const auto first = std::find_if_not(value.begin(), value.end(), [](unsigned char c) {
-        return std::isspace(c) != 0;
-    });
-
-    const auto last = std::find_if_not(value.rbegin(), value.rend(), [](unsigned char c) {
-        return std::isspace(c) != 0;
-    }).base();
-
-    if (first >= last) {
-        return {};
-    }
-
-    return {first, last};
-}
-
-std::string toLower(std::string text) {
-    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
-    return text;
-}
-
-bool parseBool(const std::string &value, bool defaultValue) {
-    const std::string processedValue = toLower(trim(value));
-    if (processedValue == "1" || processedValue == "true" || processedValue == "yes" || processedValue == "on") {
-        return true;
-    }
-    if (processedValue == "0" || processedValue == "false" || processedValue == "no" || processedValue == "off") {
-        return false;
-    }
-    return defaultValue;
-}
-
-std::optional<EnvConfig> loadEnvConfig(const std::string &envPath) {
-    std::ifstream envFile(envPath);
-    if (!envFile) {
-        logger::error("Could not open env file: " + envPath);
-        return std::nullopt;
-    }
-
-    EnvConfig config;
-    std::string line;
-    while (std::getline(envFile, line)) {
-        const std::string normalized = trim(line);
-        if (normalized.empty() || normalized.starts_with('#')) {
-            continue;
-        }
-
-        const auto delimiterPos = normalized.find('=');
-        if (delimiterPos == std::string::npos) {
-            continue;
-        }
-
-        std::string key = toLower(trim(normalized.substr(0, delimiterPos)));
-        const std::string value = trim(normalized.substr(delimiterPos + 1));
-
-        if (key == "server") {
-            config.server = value;
-        } else if (key == "port") {
-            config.port = value;
-        } else if (key == "biometric_required") {
-            config.biometricRequired = parseBool(value, true);
-        } else if (key == "type") {
-            config.debugMode = (toLower(value) == "debug");
-        } else if (key == "dialog_icon_path") {
-            config.dialogIconPath = value;
-        } else if (key == "app_icon_path") {
-            config.appIconPath = value;
-        }
-    }
-
-    if (config.server.empty() || config.port.empty()) {
-        logger::error("Missing 'server' or 'port' in " + envPath);
-        return std::nullopt;
-    }
-
-    logger::init("Configuration loaded successfully.");
-    logger::init("- Server: " + config.server);
-    logger::init("- Port: " + config.port);
-    logger::init("- Biometric Required: " + std::string(config.biometricRequired ? "true" : "false"));
-    logger::init("- Debug Mode: " + std::string(config.debugMode ? "true" : "false"));
-    if (!config.dialogIconPath.empty()) {
-        logger::init("- Dialog Icon: " + config.dialogIconPath);
-    }
-    if (!config.appIconPath.empty()) {
-        logger::init("- App Icon: " + config.appIconPath);
-    }
-
-    return config;
-}
 
 struct ParsedUri {
     std::string scheme;
@@ -131,7 +32,7 @@ ParsedUri parseUri(const std::string &uri) {
         return parsed;
     }
 
-    parsed.scheme = toLower(uri.substr(0, schemePos));
+    parsed.scheme = env::toLower(uri.substr(0, schemePos));
     const std::string remainder = uri.substr(schemePos + 3);
 
     // The authority is the part before the first slash (e.g., host:port)
@@ -196,7 +97,7 @@ std::string urlDecodeSafe(const std::string &encoded) {
     decoded.reserve(encoded.length());
     for (size_t i = 0; i < encoded.length(); ++i) {
         if (encoded[i] == '%' && i + 2 < encoded.length()) {
-            const std::string hex = toLower(encoded.substr(i + 1, 2));
+            const std::string hex = env::toLower(encoded.substr(i + 1, 2));
             // Only decode a specific "safe" list of characters.
             // Everything else remains encoded for inspection.
             if (hex == "20" || hex == "22" || hex == "2f" || hex == "3a" || hex == "3c" || hex == "3e" || hex == "5b" ||
@@ -215,7 +116,7 @@ std::string urlDecodeSafe(const std::string &encoded) {
     return decoded;
 }
 
-std::string buildOpenPortsSummary(const EnvConfig &config) {
+std::string buildOpenPortsSummary(const env::EnvConfig &config) {
     std::ostringstream summary;
     summary << "Version: " << VERSION << '\n'
             << "Version name: " << VERSION_NAME << '\n'
@@ -413,7 +314,7 @@ std::string cleanPath(const std::string &rawPath) {
     return std::string(rawPath.begin(), endOfPath);
 }
 
-void processUri(const std::string &uri, const EnvConfig &config) {
+void processUri(const std::string &uri, const env::EnvConfig &config) {
     const ParsedUri parsed = parseUri(uri);
     if (parsed.scheme.empty()) {
         logger::warning("Unsupported URI: " + uri);
@@ -563,7 +464,7 @@ int main(int argc, char *argv[]) {
     // logger::information("VERSION: " + VERSION);
 
     const std::string envPath = "data/.env";
-    auto config = loadEnvConfig(envPath);
+    auto config = env::loadEnvConfig(envPath);
     if (!config) {
         curl_global_cleanup();
         return 1;
