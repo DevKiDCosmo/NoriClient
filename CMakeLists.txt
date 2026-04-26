@@ -31,6 +31,7 @@ set_target_properties(NoriID PROPERTIES
 if(APPLE)
 	target_sources(NoriID PRIVATE src/biometric/BiometricAuth.mm)
 	target_sources(NoriID PRIVATE src/ui/AppController.mm)
+	target_sources(NoriID PRIVATE src/ui/Dialogs.mm)
 	target_link_libraries(NoriID PRIVATE "-framework AppKit" "-framework LocalAuthentication" "-framework Foundation" "-framework Security")
 else()
 	target_sources(NoriID PRIVATE src/biometric/BiometricAuth_stub.cpp)

@@ -47,7 +47,7 @@ std::string toLower(std::string text) {
     return text;
 }
 
-bool parseBool(const std::string& value, bool defaultValue) {
+bool parseBool(const std::string &value, bool defaultValue) {
     const std::string processedValue = toLower(trim(value));
     if (processedValue == "1" || processedValue == "true" || processedValue == "yes" || processedValue == "on") {
         return true;
@@ -199,7 +199,9 @@ std::string urlDecodeSafe(const std::string &encoded) {
             const std::string hex = toLower(encoded.substr(i + 1, 2));
             // Only decode a specific "safe" list of characters.
             // Everything else remains encoded for inspection.
-            if (hex == "20" || hex == "22" || hex == "2f" || hex == "3a" || hex == "3c" || hex == "3e" || hex == "5b" || hex == "5d" || hex == "7b" || hex == "7d") { // space, ", /, :, <, >, [, ], {, }
+            if (hex == "20" || hex == "22" || hex == "2f" || hex == "3a" || hex == "3c" || hex == "3e" || hex == "5b" ||
+                hex == "5d" || hex == "7b" || hex == "7d") {
+                // space, ", /, :, <, >, [, ], {, }
                 decoded += static_cast<char>(std::stoi(hex, nullptr, 16));
                 i += 2;
             } else {
@@ -314,7 +316,7 @@ std::optional<uint32_t> findMagicNumberInHexString(const std::string &hexData) {
     const std::string purposeHex = std::string(purposeStart, purposeStart + purposeHexLength);
     try {
         return static_cast<uint32_t>(std::stoul(purposeHex, nullptr, 16));
-    } catch (const std::logic_error&) {
+    } catch (const std::logic_error &) {
         return std::nullopt; // Not a valid hex string or out of range
     }
 }
@@ -342,7 +344,8 @@ void logUrlEncodedCandidates(const std::string &data) {
 
             // A magic number candidate should be at least a few bytes long.
             // This avoids logging single characters like %20 (space).
-            if (candidate.length() >= 3 * 4) { // At least 4 bytes encoded
+            if (candidate.length() >= 3 * 4) {
+                // At least 4 bytes encoded
                 logger::hint("Magic number verification: Found potential candidate in URI: " + candidate);
                 foundAny = true;
             }
@@ -420,7 +423,10 @@ void processUri(const std::string &uri, const EnvConfig &config) {
     if (parsed.scheme == "nori-slk") {
         logger::socket("Received nori-slk URI: " + uri);
         if (!parsed.host.empty()) {
-            logger::socket("nori-slk source host: " + parsed.host + (parsed.port.empty() ? std::string{} : (std::string(":") + parsed.port)));
+            logger::socket(
+                "nori-slk source host: " + parsed.host + (parsed.port.empty()
+                                                              ? std::string{}
+                                                              : (std::string(":") + parsed.port)));
         }
         if (!parsed.path.empty()) {
             logger::socket("nori-slk source path: " + parsed.path);
@@ -431,7 +437,8 @@ void processUri(const std::string &uri, const EnvConfig &config) {
         target << "http://" << parsed.host << ":" << parsed.port << parsed.path;
         logger::api(target.str());
 
-        const network::request::FetchResult fetchResult = network::request::MiniRequest::fetch(target.str(), config.biometricRequired, config.debugMode, config.dialogIconPath);
+        const network::request::FetchResult fetchResult = network::request::MiniRequest::fetch(
+            target.str(), config.biometricRequired, config.debugMode, config.dialogIconPath);
         if (fetchResult.status == network::request::FetchStatus::AuthCanceled) {
             logger::fatal("Authentication canceled. Request aborted.");
             return;
@@ -439,14 +446,16 @@ void processUri(const std::string &uri, const EnvConfig &config) {
 
         if (fetchResult.status != network::request::FetchStatus::Success || !fetchResult.response) {
             logger::error("Failed to fetch nori-slk request.");
-            biometric::showJsonResponseWindow("Failed to fetch nori-slk request.", config.appIconPath.empty() ? config.dialogIconPath : config.appIconPath);
+            biometric::showJsonResponseWindow("Failed to fetch nori-slk request.",
+                                              config.appIconPath.empty() ? config.dialogIconPath : config.appIconPath);
             return;
         }
 
         const network::request::HttpResponse &response = *fetchResult.response;
         if (response.statusCode < 200 || response.statusCode >= 300) {
             logger::warning("nori-slk request returned HTTP " + std::to_string(response.statusCode));
-            biometric::showJsonResponseWindow(response.body, config.appIconPath.empty() ? config.dialogIconPath : config.appIconPath);
+            biometric::showJsonResponseWindow(response.body,
+                                              config.appIconPath.empty() ? config.dialogIconPath : config.appIconPath);
             return;
         }
 
@@ -454,10 +463,12 @@ void processUri(const std::string &uri, const EnvConfig &config) {
             const nlohmann::json jsonResponse = nlohmann::json::parse(response.body);
             const std::string prettyJson = jsonResponse.dump(2);
             logger::response("nori-slk JSON response received.");
-            biometric::showJsonResponseWindow(prettyJson, config.appIconPath.empty() ? config.dialogIconPath : config.appIconPath);
+            biometric::showJsonResponseWindow(
+                prettyJson, config.appIconPath.empty() ? config.dialogIconPath : config.appIconPath);
         } catch (const nlohmann::json::parse_error &err) {
             logger::error(std::string("Failed to parse nori-slk JSON: ") + err.what());
-            biometric::showJsonResponseWindow(response.body, config.appIconPath.empty() ? config.dialogIconPath : config.appIconPath);
+            biometric::showJsonResponseWindow(response.body,
+                                              config.appIconPath.empty() ? config.dialogIconPath : config.appIconPath);
         }
         return;
     }
@@ -481,7 +492,8 @@ void processUri(const std::string &uri, const EnvConfig &config) {
                 logger::api("Magic number found in nori-api path with purpose: '" + *purpose + "'");
                 if (*purpose == "approval") {
                     if (config.biometricRequired) {
-                        const biometric::AuthResult authResult = biometric::authorizeRequest("Authenticate to reveal installation.", config.debugMode, config.dialogIconPath);
+                        const biometric::AuthResult authResult = biometric::authorizeRequest(
+                            "Authenticate to reveal installation.", config.debugMode, config.dialogIconPath);
                         if (authResult != biometric::AuthResult::Success) {
                             logger::warning("Authentication was not successful. Approval action aborted.");
                             return;
@@ -496,10 +508,11 @@ void processUri(const std::string &uri, const EnvConfig &config) {
                     target << "http://" << parsed.host << ":" << parsed.port << cleanedPath;
                     logger::api("Dispatching nori-api request to: " + target.str());
 
-                    auto fetchResult = network::request::MiniRequest::fetch(target.str(), false, config.debugMode, config.dialogIconPath);
-                    int reponseCode = network::request::MiniRequest::responseHandler(fetchResult, config.debugMode, config.dialogIconPath);
+                    auto fetchResult = network::request::MiniRequest::fetch(
+                        target.str(), false, config.debugMode, config.dialogIconPath);
+                    int reponseCode = network::request::MiniRequest::responseHandler(
+                        fetchResult, config.debugMode, config.dialogIconPath);
                     logger::information("Code:" + std::to_string(reponseCode));
-
                 } else if (*purpose == "registration") {
                     // This will do client registration.
                     logger::notImplemented("REGISTRATION purpose is not implemented yet in nori-api.");
