@@ -3,6 +3,7 @@
 #include "../../logs/logger.h"
 
 #include <curl/curl.h>
+#include <nlohmann/json.hpp>
 
 namespace network::request {
 
@@ -28,6 +29,35 @@ namespace network::request {
         }
         return fetchRaw(url);
     }
+
+    bool MiniRequest::responseHandler(FetchResult &fetchResult, const bool &debugMode, const std::string &dialogIconPath) {
+        if (fetchResult.status != network::request::FetchStatus::Success || !fetchResult.response) {
+            logger::error("Failed to fetch nori-api request.");
+            biometric::showJsonResponseWindow("Failed to fetch nori-api request.", dialogIconPath);
+            return false;
+        }
+
+        const network::request::HttpResponse &response = *fetchResult.response;
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+            logger::warning("nori-api request returned HTTP " + std::to_string(response.statusCode));
+            biometric::showJsonResponseWindow(response.body, dialogIconPath);
+            return false;
+        }
+
+        try {
+            const nlohmann::json jsonResponse = nlohmann::json::parse(response.body);
+            logger::response("nori-api JSON response received.");
+            // logger::information("Response content:\n" + jsonResponse.dump());
+            if (debugMode)
+                biometric::showJsonResponseWindow(jsonResponse.dump(2), dialogIconPath);
+        } catch (const nlohmann::json::parse_error &err) {
+            logger::error(std::string("Failed to parse nori-api JSON: ") + err.what());
+            if (debugMode)
+                biometric::showJsonResponseWindow(response.body, dialogIconPath);
+        }
+        return true;
+    }
+
 
     FetchResult MiniRequest::fetchRaw(const std::string &url) {
         CURL *curl = curl_easy_init();

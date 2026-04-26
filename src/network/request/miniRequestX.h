@@ -25,6 +25,8 @@ namespace network::request {
     class MiniRequest {
     public:
         static FetchResult fetch(const std::string &url, bool biometricRequired, bool debugMode, const std::string &dialogIconPath);
+        static bool responseHandler(FetchResult &fetchResult, const bool &debugMode, const std::string &dialogIconPath);
+
 
     private:
         static FetchResult fetchRaw(const std::string &url);

@@ -47,12 +47,12 @@ std::string toLower(std::string text) {
     return text;
 }
 
-bool parseBool(std::string value, bool defaultValue) {
-    value = toLower(trim(value));
-    if (value == "1" || value == "true" || value == "yes" || value == "on") {
+bool parseBool(const std::string& value, bool defaultValue) {
+    const std::string processedValue = toLower(trim(value));
+    if (processedValue == "1" || processedValue == "true" || processedValue == "yes" || processedValue == "on") {
         return true;
     }
-    if (value == "0" || value == "false" || value == "no" || value == "off") {
+    if (processedValue == "0" || processedValue == "false" || processedValue == "no" || processedValue == "off") {
         return false;
     }
     return defaultValue;
@@ -496,30 +496,13 @@ void processUri(const std::string &uri, const EnvConfig &config) {
                     target << "http://" << parsed.host << ":" << parsed.port << cleanedPath;
                     logger::api("Dispatching nori-api request to: " + target.str());
 
-                    const network::request::FetchResult fetchResult = network::request::MiniRequest::fetch(target.str(), false, config.debugMode, config.dialogIconPath);
-                    if (fetchResult.status != network::request::FetchStatus::Success || !fetchResult.response) {
-                        logger::error("Failed to fetch nori-api request.");
-                        biometric::showJsonResponseWindow("Failed to fetch nori-api request.", config.appIconPath.empty() ? config.dialogIconPath : config.appIconPath);
-                        return;
-                    }
+                    auto fetchResult = network::request::MiniRequest::fetch(target.str(), false, config.debugMode, config.dialogIconPath);
+                    int reponseCode = network::request::MiniRequest::responseHandler(fetchResult, config.debugMode, config.dialogIconPath);
+                    logger::information("Code:" + std::to_string(reponseCode));
 
-                    const network::request::HttpResponse &response = *fetchResult.response;
-                    if (response.statusCode < 200 || response.statusCode >= 300) {
-                        logger::warning("nori-api request returned HTTP " + std::to_string(response.statusCode));
-                        biometric::showJsonResponseWindow(response.body, config.appIconPath.empty() ? config.dialogIconPath : config.appIconPath);
-                        return;
-                    }
-
-                    try {
-                        const nlohmann::json jsonResponse = nlohmann::json::parse(response.body);
-                        logger::response("nori-api JSON response received.");
-                        biometric::showJsonResponseWindow(jsonResponse.dump(2), config.appIconPath.empty() ? config.dialogIconPath : config.appIconPath);
-                    } catch (const nlohmann::json::parse_error &err) {
-                        logger::error(std::string("Failed to parse nori-api JSON: ") + err.what());
-                        biometric::showJsonResponseWindow(response.body, config.appIconPath.empty() ? config.dialogIconPath : config.appIconPath);
-                    }
                 } else if (*purpose == "registration") {
                     // This will do client registration.
+                    logger::notImplemented("REGISTRATION purpose is not implemented yet in nori-api.");
                 }
             } else {
                 logger::warning("Magic number not found in the URI path.");
@@ -567,7 +550,7 @@ int main(int argc, char *argv[]) {
     // logger::information("VERSION: " + VERSION);
 
     const std::string envPath = "data/.env";
-    const auto config = loadEnvConfig(envPath);
+    auto config = loadEnvConfig(envPath);
     if (!config) {
         curl_global_cleanup();
         return 1;
@@ -579,7 +562,7 @@ int main(int argc, char *argv[]) {
     const std::string openPorts = buildOpenPortsSummary(*config);
 
     // ! TODO: AppIconPath or the image cannot be applied.
-    ui::installAppController(version, openPorts, config->appIconPath, [config](const std::string &uri) {
+    ui::installAppController(version, openPorts, config->appIconPath, [&config](const std::string &uri) {
         processUri(uri, *config);
     });
 
