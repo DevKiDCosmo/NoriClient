@@ -1,12 +1,15 @@
 #include "miniRequestX.h"
 #include "../../biometric/BiometricAuth.h"
 #include "../../logs/logger.h"
-#include "../../ui/Dialogs.h"
+#include "../../ui/Reponses/Dialogs.h"
 
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
+#include <string_view>
 
 namespace network::request {
+    const ProtocolChain MiniRequest::chainHTTP = ProtocolChain::create({"https://", "http://"});
+
     size_t writeCallback(char *contents, size_t size, size_t nmemb, void *userp) {
         const size_t realSize = size * nmemb;
         auto *body = static_cast<std::string *>(userp);
@@ -23,7 +26,7 @@ namespace network::request {
     }
 
     FetchResult MiniRequest::fetch(const std::string &url, bool biometricRequired, bool debugMode,
-                                   const std::string &dialogIconPath) {
+                                   const std::string &dialogIconPath, const ProtocolChain &chain) {
         if (biometricRequired) {
             const biometric::AuthResult authResult = biometric::authorizeRequest(
                 "Authenticate to prove identity", debugMode, dialogIconPath);
@@ -37,7 +40,7 @@ namespace network::request {
         } else {
             logger::hint("Authentication disabled.");
         }
-        return fetchRaw(url, dialogIconPath);
+        return fetchRaw(url, dialogIconPath, chain);
     }
 
     bool MiniRequest::responseHandler(FetchResult &fetchResult, const bool &debugMode,
@@ -59,7 +62,7 @@ namespace network::request {
         try {
             const nlohmann::json jsonResponse = nlohmann::json::parse(response.body);
             logger::response("nori-api JSON response received.");
-            logger::information(jsonResponse.dump(2));
+            logger::debug(jsonResponse.dump(2));
 
             if (jsonResponse.contains("status")) {
                 std::string status = jsonResponse["status"];
@@ -92,48 +95,62 @@ namespace network::request {
         return true;
     }
 
-
-    FetchResult MiniRequest::fetchRaw(const std::string &url, const std::string &dialogIconPath) {
-        CURL *curl = curl_easy_init();
-        if (!curl) {
-            logger::fatal("Failed to initialize curl");
-            return {FetchStatus::Failed, std::nullopt, "Failed to initialize curl"};
+    FetchResult MiniRequest::fetchRaw(const std::string &url, const std::string &dialogIconPath, const ProtocolChain &chain) {
+        if (chain.list().empty()) {
+            logger::fatal("Protocol chain is empty. Cannot perform request.");
+            return {FetchStatus::Failed, std::nullopt, "Protocol chain is empty."};
         }
 
-        ui::showProgressDialog("Connecting...", "Fetching data from the server.", dialogIconPath);
+        for (const std::string& protocol : chain.list()) {
+            CURL *curl = curl_easy_init();
+            if (!curl) {
+                logger::fatal("Failed to initialize curl");
+                return {FetchStatus::Failed, std::nullopt, "Failed to initialize curl"};
+            }
+            ui::showProgressDialog("Connecting...", "Fetching data from the server.", dialogIconPath);
 
-        HttpResponse response;
-        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-        curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
-        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 20L);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response.body);
-        curl_easy_setopt(curl, CURLOPT_USERAGENT, "NoriID/1.0");
-        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
-        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progressCallback);
+            std::string fullUrl = protocol + url;
+            logger::debug("Attempting request with URL: " + fullUrl);
 
-        struct curl_slist *headers = nullptr;
-        headers = curl_slist_append(headers, "X-NoriID-Client: true");
-        headers = curl_slist_append(headers, "Content-Type: application/json");
-        headers = curl_slist_append(headers, "X-Request-Source: desktop-macos");
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+            HttpResponse response;
+            curl_easy_setopt(curl, CURLOPT_URL, fullUrl.c_str());
+            curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+            curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT, 20L);
+            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
+            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response.body);
+            curl_easy_setopt(curl, CURLOPT_USERAGENT, "NoriID/1.0");
+            curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+            curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progressCallback);
 
-        const CURLcode result = curl_easy_perform(curl);
+            if (std::string_view(url).find("127.0.0.1") != std::string::npos) {
+                logger::hint("Disabling SSL verification for local request.");
+                curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+                curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+            }
 
-        ui::closeProgressDialog();
+            struct curl_slist *headers = nullptr;
+            headers = curl_slist_append(headers, "X-NoriID-Client: true");
+            headers = curl_slist_append(headers, "Content-Type: application/json");
+            headers = curl_slist_append(headers, "X-Request-Source: desktop-macos");
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
-        if (result != CURLE_OK) {
+            const CURLcode result = curl_easy_perform(curl);
+
+            ui::closeProgressDialog();
+
+            if (result == CURLE_OK) {
+                curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response.statusCode);
+                curl_slist_free_all(headers);
+                curl_easy_cleanup(curl);
+                return {FetchStatus::Success, response, {}};
+            }
+
             const std::string error = std::string("Request failed: ") + curl_easy_strerror(result);
             logger::error(error);
             curl_slist_free_all(headers);
             curl_easy_cleanup(curl);
-            return {FetchStatus::Failed, std::nullopt, error};
         }
-
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response.statusCode);
-        curl_slist_free_all(headers);
-        curl_easy_cleanup(curl);
-        return {FetchStatus::Success, response, {}};
+        return {FetchStatus::Failed, std::nullopt, "All protocols in the chain failed."};
     }
 }

@@ -8,6 +8,9 @@
 #include <mutex>
 #include <sstream>
 
+#include "../defines/env/env.h"
+#include "../routine/init.h"
+
 namespace {
     std::mutex g_loggerMutex;
     std::atomic_bool g_colorsEnabled{true};
@@ -96,6 +99,11 @@ void logger::notImplemented(const std::string_view message) {
     log(LogType::notImplemented, message);
 }
 
+void logger::debug(std::string_view message) {
+    if (init::config.debugMode)
+        log(LogType::Debug, std::string(message));
+}
+
 const char *logger::label(const LogType type) {
     switch (type) {
         case LogType::Information:
@@ -122,6 +130,8 @@ const char *logger::label(const LogType type) {
             return "INIT";
         case LogType::notImplemented:
             return "NOT IMPLEMENTED";
+        case LogType::Debug:
+            return "DEBUG";
     }
 
     return "UNKNOWN";
@@ -153,6 +163,8 @@ const char *logger::color(const LogType type) {
             return "\033[1;95m";
         case LogType::notImplemented:
             return "\033[1;91m";
+        case LogType::Debug:
+            return "\033[90m";
     }
 
     return "\033[37m";

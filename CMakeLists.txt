@@ -26,7 +26,11 @@ add_executable(NoriID MACOSX_BUNDLE src/main.cpp
 		src/defines/env/env.cpp
 		src/defines/env/env.h
 		src/defines/runtime/runtimeGlobal.cpp
-		src/defines/runtime/runtimeGlobal.h)
+		src/defines/runtime/runtimeGlobal.h
+		src/network/uri/uriHandler.cpp
+		src/network/uri/uriHandler.h
+		src/routine/init.cpp
+		src/routine/init.h)
 
 set_target_properties(NoriID PROPERTIES
 	MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist"
@@ -35,7 +39,7 @@ set_target_properties(NoriID PROPERTIES
 if(APPLE)
 	target_sources(NoriID PRIVATE src/biometric/BiometricAuth.mm)
 	target_sources(NoriID PRIVATE src/ui/AppController.mm)
-	target_sources(NoriID PRIVATE src/ui/Dialogs.mm)
+	target_sources(NoriID PRIVATE src/ui/Reponses/Dialogs.mm)
 	target_link_libraries(NoriID PRIVATE "-framework AppKit" "-framework LocalAuthentication" "-framework Foundation" "-framework Security")
 else()
 	target_sources(NoriID PRIVATE src/biometric/BiometricAuth_stub.cpp)
