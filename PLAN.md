@@ -6,6 +6,29 @@
 - Updating Main.cpp and move things to uri etc.
 - Updating reason for authentication. Or make a function where the process is called and it is just going through.
 - Adding new msg for id login.
+- Connecting loose function to any header
+
+# Loose Function
+Freie Top-Level-Funktionen
+src/main.cpp — main
+src/network/uri/uriHandler.cpp — routingHandler
+src/network/uri/util/validate.cpp — toASCII_IDN
+src/network/uri/util/validate.cpp — isAllDigits
+Platzhalter/Stubs
+src/biometric/BiometricAuth_stub.cpp — Stub-Implementierung, leere Bodies / AuthResult::Failed
+src/defines/runtime/runtimeGlobal.h — leere Klasse runtimeGlobal
+src/defines/runtime/runtimeGlobal.cpp — nur #include, keine Logik
+
+Lose Funktionen ohne Header-/Klassenbindung
+src/network/uri/uriHandler.cpp — routingHandler(...)
+src/network/uri/util/validate.cpp — toASCII_IDN(...)
+src/network/uri/util/validate.cpp — isAllDigits(...)
+Dateien, die nach späteren Platzhaltern / Auslagerungskandidaten aussehen
+src/biometric/auth-id/IDFallback.cpp
+src/biometric/auth-id/IDFallback.h
+src/defines/runtime/runtimeGlobal.cpp
+src/defines/runtime/runtimeGlobal.h
+src/biometric/BiometricAuth_stub.cpp
 
 # Add different URI Processes
 

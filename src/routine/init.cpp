@@ -14,6 +14,8 @@
 #include <optional>
 #include <string>
 
+#include "../network/uri/util/utilURI.h"
+
 env::EnvConfig init::config;
 
 int init::_init(int argc, char *argv[]) {
@@ -32,7 +34,7 @@ int init::_init(int argc, char *argv[]) {
     biometric::initializeUiHost();
 
     const std::string version = std::string(VERSION) + " " + std::string(VERSION_NAME);
-    const std::string openPorts = uriHandler::buildOpenPortsSummary(config);
+    const std::string openPorts = uri::MICS::buildOpenPortsSummary(config);
     logger::init(openPorts);
 
     // ! TODO: AppIconPath or the image cannot be applied.

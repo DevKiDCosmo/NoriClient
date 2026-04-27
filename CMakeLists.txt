@@ -43,7 +43,13 @@ add_executable(NoriID MACOSX_BUNDLE src/main.cpp
 		src/routine/init.cpp
 		src/routine/init.h
 		src/network/uri/util/validate.cpp
-		src/network/uri/util/validate.h)
+		src/network/uri/util/utilURI.h
+		src/network/uri/routes/slk.cpp
+		src/network/uri/routes/api.cpp
+		src/network/uri/routes/auth.cpp
+		src/network/uri/routes/request.cpp
+		src/network/uri/routes/routes.h
+		src/network/uri/util/micsURI.cpp)
 
 set_target_properties(NoriID PROPERTIES
 	MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist"
