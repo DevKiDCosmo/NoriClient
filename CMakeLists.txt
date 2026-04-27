@@ -13,6 +13,17 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
+# ---- STRANGE
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(IDN2 REQUIRED libidn2)
+
+add_library(idn2::idn2 UNKNOWN IMPORTED)
+set_target_properties(idn2::idn2 PROPERTIES
+		IMPORTED_LOCATION "${IDN2_LINK_LIBRARIES}"
+		INTERFACE_INCLUDE_DIRECTORIES "${IDN2_INCLUDE_DIRS}"
+)
+# ---- STRANGE
+
 find_package(CURL REQUIRED)
 
 add_executable(NoriID MACOSX_BUNDLE src/main.cpp
@@ -30,7 +41,9 @@ add_executable(NoriID MACOSX_BUNDLE src/main.cpp
 		src/network/uri/uriHandler.cpp
 		src/network/uri/uriHandler.h
 		src/routine/init.cpp
-		src/routine/init.h)
+		src/routine/init.h
+		src/network/uri/util/validate.cpp
+		src/network/uri/util/validate.h)
 
 set_target_properties(NoriID PROPERTIES
 	MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist"
@@ -45,4 +58,4 @@ else()
 	target_sources(NoriID PRIVATE src/biometric/BiometricAuth_stub.cpp)
 endif()
 
-target_link_libraries(NoriID PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)
+target_link_libraries(NoriID PRIVATE CURL::libcurl nlohmann_json::nlohmann_json idn2::idn2)

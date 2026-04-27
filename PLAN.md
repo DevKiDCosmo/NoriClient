@@ -16,6 +16,7 @@
    - Version and installation.
    - Configuration
    - Force Update.
+   - automatiticity
 
 - `nori-slk://` - Single Login Key.
 - `nori-request://` - for login related actions, with subtypes for different login methods (e.g., `nori-login://password`, `nori-login://native`).

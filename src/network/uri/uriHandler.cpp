@@ -17,6 +17,8 @@
 #include <sstream>
 #include <string>
 
+#include "util/validate.h"
+
 struct ParsedUri {
     std::string scheme;
     std::string host;
@@ -251,9 +253,20 @@ std::vector<std::string> splitPath(std::string_view rawPath) {
     return result;
 }
 
+bool validateIP(std::string host) {
+    // RegEx from https://jsfiddle.net/opd1v7au/2/
+    static const std::regex r(
+        R"/((^\s*((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))\s*$)|(^\s*((([0-9A-Fa-f]{1,4}:){7}([0-9A-Fa-f]{1,4}|:))|(([0-9A-Fa-f]{1,4}:){6}(:[0-9A-Fa-f]{1,4}|((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3})|:))|(([0-9A-Fa-f]{1,4}:){5}(((:[0-9A-Fa-f]{1,4}){1,2})|:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3})|:))|(([0-9A-Fa-f]{1,4}:){4}(((:[0-9A-Fa-f]{1,4}){1,3})|((:[0-9A-Fa-f]{1,4})?:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){3}(((:[0-9A-Fa-f]{1,4}){1,4})|((:[0-9A-Fa-f]{1,4}){0,2}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){2}(((:[0-9A-Fa-f]{1,4}){1,5})|((:[0-9A-Fa-f]{1,4}){0,3}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){1}(((:[0-9A-Fa-f]{1,4}){1,6})|((:[0-9A-Fa-f]{1,4}){0,4}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(:(((:[0-9A-Fa-f]{1,4}){1,7})|((:[0-9A-Fa-f]{1,4}){0,5}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:)))(%.+)?\s*$))/");
+    return std::regex_match(host, r);
+}
+
 void uriHandler::processUri(const std::string &uri, const env::EnvConfig &config) {
+    // Every handlers are async.
+    // If a process takes more than expected return job id and also send occupied as status. REST.JSON.Type here.
+
     const ParsedUri parsed = parseUri(uri);
     if (parsed.scheme.empty()) {
+        // ! Unreachable
         logger::warning("Unsupported URI: " + uri);
         return;
     }
@@ -272,7 +285,7 @@ void uriHandler::processUri(const std::string &uri, const env::EnvConfig &config
 
         std::ostringstream target;
         //target << "https://" << config.server << ':' << config.port;
-        target << "http://" << parsed.host << ":" << parsed.port << parsed.path;
+        target << parsed.host << ":" << parsed.port << parsed.path;
         logger::api(target.str());
 
         const network::request::FetchResult fetchResult = network::request::MiniRequest::fetch(
@@ -313,6 +326,27 @@ void uriHandler::processUri(const std::string &uri, const env::EnvConfig &config
 
     if (parsed.scheme == "nori-api") {
         logger::api("Received nori-api URI: " + uri);
+
+        logger::debug(
+            "Validate host: " + std::string(uri::validate::Host::validateHost(parsed.host) ? "valid" : "invalid"));
+        logger::debug("Validate IPvX: " + std::string(validateIP(parsed.host) ? "valid" : "invalid"));
+
+        /*
+         * Adding first and second level parsing.
+         * First:
+         *   - Immediately after uri protocol. e.g. nori-api://{command}
+         * Those usually have no continous segments but can.
+         * Second.
+         *   - All after the host: e.g. nori-api://{host}/...
+         * Differenciating is happened in first position. Either a valid host or not, then it is automatically a command.
+         */
+
+        // Handle ambiguous "nori-api://info" case where "info" is parsed as host
+        if (parsed.host == "info" && parsed.path.empty()) {
+            ui::showInfoWindow();
+            return;
+        }
+
         if (parsed.path.empty()) {
             return;
         }
@@ -320,7 +354,23 @@ void uriHandler::processUri(const std::string &uri, const env::EnvConfig &config
         const std::string safeDecodedPath = urlDecodeSafe(parsed.path);
         logger::socket("nori-api path (safe decoded): " + safeDecodedPath);
 
+        // ? HANDLE here first level.
         if (safeDecodedPath == "/info") {
+            ui::showInfoWindow();
+            return;
+        }
+
+        const auto segments = splitPath(parsed.path);
+        if (segments.empty()) {
+            logger::warning("nori-api path is empty after splitting: " + parsed.path);
+            return;
+        }
+        for (const std::string &seg: segments) {
+            logger::debug("Segment: " + seg);
+        }
+
+
+        if (segments[0] == "info") {
             ui::showInfoWindow();
         } else {
             logger::api("Unknown nori-api path: " + safeDecodedPath);
@@ -346,10 +396,12 @@ void uriHandler::processUri(const std::string &uri, const env::EnvConfig &config
                     target << parsed.host << ":" << parsed.port << cleanedPath;
                     logger::api("Dispatching nori-api request to: " + target.str());
 
-                    // network::request::ProtocolChain chain = network::request::ProtocolChain::create({"nori-slk://","https://", "http://"});
+                    network::request::ProtocolChain chain = network::request::ProtocolChain::create({
+                        "kaizo://", "kzps://", "nori-slk://", "https://", "http://"
+                    });
 
                     auto fetchResult = network::request::MiniRequest::fetch(
-                        target.str(), false, config.debugMode, config.dialogIconPath);
+                        target.str(), false, config.debugMode, config.dialogIconPath, chain);
                     int reponseCode = network::request::MiniRequest::responseHandler(
                         fetchResult, config.debugMode, config.dialogIconPath);
                     logger::debug("Code:" + std::to_string(reponseCode) + " - 1: Success / 0: Failed / -1: Canceled");
