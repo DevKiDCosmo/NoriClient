@@ -35,7 +35,7 @@ void routingHandler(const std::string &uri, const env::EnvConfig &config) {
     if (parsed.scheme == "nori-request")
         routes::request::request_(parsed, uri, config);
 
-    logger::warning("Unknown URI scheme: " + parsed.scheme);
+    // logger::warning("Unknown URI scheme: " + parsed.scheme);
 }
 
 void uriHandler::processUri(const std::string &uri, const env::EnvConfig &config) {

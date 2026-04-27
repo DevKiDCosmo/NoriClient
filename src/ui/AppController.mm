@@ -5,6 +5,7 @@
 #if TARGET_OS_OSX
 #include <AppKit/AppKit.h>
 #include <Foundation/Foundation.h>
+#include <dispatch/dispatch.h>
 
 #include <utility>
 
@@ -111,10 +112,12 @@ void ensureInfoPanel() {
 }
 
 void showInfoPanel() {
-    ensureInfoPanel();
-    [gInfoPanel center];
-    [gInfoPanel makeKeyAndOrderFront:nil];
-    [NSApp activateIgnoringOtherApps:YES];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        ensureInfoPanel();
+        [gInfoPanel center];
+        [gInfoPanel makeKeyAndOrderFront:nil];
+        [NSApp activateIgnoringOtherApps:YES];
+    });
 }
 
 void setupStatusItem() {

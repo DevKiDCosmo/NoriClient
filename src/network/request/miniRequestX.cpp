@@ -102,11 +102,20 @@ namespace network::request {
         }
 
         for (const std::string& protocol : chain.list()) {
+            if (protocol != "https://" && protocol != "http://") {
+                logger::debug("Skipping unsupported protocol in chain: " + protocol);
+                logger::debug("Searching other method");
+                logger::notImplemented("Protocol '" + protocol + "' is not implemented yet. Skipping.");
+                continue;
+            }
+
             CURL *curl = curl_easy_init();
             if (!curl) {
                 logger::fatal("Failed to initialize curl");
                 return {FetchStatus::Failed, std::nullopt, "Failed to initialize curl"};
             }
+
+            // Adding fake delay to request to see in action
             ui::showProgressDialog("Connecting...", "Fetching data from the server.", dialogIconPath);
 
             std::string fullUrl = protocol + url;

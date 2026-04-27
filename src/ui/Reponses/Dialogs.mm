@@ -5,6 +5,7 @@
 #if TARGET_OS_OSX
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
+#import <dispatch/dispatch.h>
 
 namespace {
 NSAlert* gProgressAlert = nil;
@@ -30,75 +31,86 @@ NSTextField* createDescriptionLabel(const std::string& text) {
 namespace ui {
 
 void showProgressDialog(const std::string& message, const std::string& description, const std::string& iconPath) {
-    if (gProgressAlert) {
-        return;
-    }
+    const std::string messageCopy = message;
+    const std::string descriptionCopy = description;
+    const std::string iconPathCopy = iconPath;
 
-    gProgressAlert = [[NSAlert alloc] init];
-    [gProgressAlert setAlertStyle:NSAlertStyleInformational];
-    [gProgressAlert setMessageText:[NSString stringWithUTF8String:message.c_str()]];
-
-    if (!iconPath.empty()) {
-        NSImage* icon = [[NSImage alloc] initWithContentsOfFile:[NSString stringWithUTF8String:iconPath.c_str()]];
-        if (icon) {
-            [gProgressAlert setIcon:icon];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (gProgressAlert) {
+            return;
         }
-    }
 
-    // Create a container view for the description and progress bar
-    NSView* accessoryView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 280, 60)];
+        gProgressAlert = [[NSAlert alloc] init];
+        [gProgressAlert setAlertStyle:NSAlertStyleInformational];
+        [gProgressAlert setMessageText:[NSString stringWithUTF8String:messageCopy.c_str()]];
 
-    NSTextField* descriptionLabel = createDescriptionLabel(description);
-    [descriptionLabel setFrame:NSMakeRect(0, 25, 280, 35)];
-    [accessoryView addSubview:descriptionLabel];
+        if (!iconPathCopy.empty()) {
+            NSImage* icon = [[NSImage alloc] initWithContentsOfFile:[NSString stringWithUTF8String:iconPathCopy.c_str()]];
+            if (icon) {
+                [gProgressAlert setIcon:icon];
+            }
+        }
 
-    gProgressBar = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(0, 0, 280, 20)];
-    [gProgressBar setIndeterminate:NO];
-    [gProgressBar setMinValue:0.0];
-    [gProgressBar setMaxValue:1.0];
-    [gProgressBar setDoubleValue:0.0];
-    [accessoryView addSubview:gProgressBar];
+        NSView* accessoryView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 280, 60)];
+        NSTextField* descriptionLabel = createDescriptionLabel(descriptionCopy);
+        [descriptionLabel setFrame:NSMakeRect(0, 25, 280, 35)];
+        [accessoryView addSubview:descriptionLabel];
 
-    [gProgressAlert setAccessoryView:accessoryView];
+        gProgressBar = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(0, 0, 280, 20)];
+        [gProgressBar setIndeterminate:NO];
+        [gProgressBar setMinValue:0.0];
+        [gProgressBar setMaxValue:1.0];
+        [gProgressBar setDoubleValue:0.0];
+        [accessoryView addSubview:gProgressBar];
 
-    [gProgressAlert beginSheetModalForWindow:[NSApp keyWindow] completionHandler:nil];
+        [gProgressAlert setAccessoryView:accessoryView];
+        [gProgressAlert beginSheetModalForWindow:[NSApp keyWindow] completionHandler:nil];
+    });
 }
 
 void updateProgress(double fraction) {
-    if (gProgressBar) {
-        [gProgressBar setDoubleValue:fraction];
-    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (gProgressBar) {
+            [gProgressBar setDoubleValue:fraction];
+        }
+    });
 }
 
 void closeProgressDialog() {
-    if (gProgressAlert) {
-        [[gProgressAlert window] orderOut:nil];
-        gProgressAlert = nil;
-        gProgressBar = nil;
-    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (gProgressAlert) {
+            [[gProgressAlert window] orderOut:nil];
+            gProgressAlert = nil;
+            gProgressBar = nil;
+        }
+    });
 }
 
 void showButtonDialog(const std::string& message, const std::string& description, const std::string& iconPath, const std::string& button1Text, const std::string& button2Text, std::function<void(int)> handler) {
-    NSAlert* alert = [[NSAlert alloc] init];
-    [alert setAlertStyle:NSAlertStyleInformational];
-    [alert setMessageText:[NSString stringWithUTF8String:message.c_str()]];
-
-    // Replace informativeText with a custom styled label
-    [alert setAccessoryView:createDescriptionLabel(description)];
-
-    if (!iconPath.empty()) {
-        NSImage* icon = [[NSImage alloc] initWithContentsOfFile:[NSString stringWithUTF8String:iconPath.c_str()]];
-        if (icon) {
-            [alert setIcon:icon];
-        }
-    }
-
-    [alert addButtonWithTitle:[NSString stringWithUTF8String:button1Text.c_str()]];
-    if (!button2Text.empty()) {
-        [alert addButtonWithTitle:[NSString stringWithUTF8String:button2Text.c_str()]];
-    }
+    const std::string messageCopy = message;
+    const std::string descriptionCopy = description;
+    const std::string iconPathCopy = iconPath;
+    const std::string button1TextCopy = button1Text;
+    const std::string button2TextCopy = button2Text;
 
     dispatch_async(dispatch_get_main_queue(), ^{
+        NSAlert* alert = [[NSAlert alloc] init];
+        [alert setAlertStyle:NSAlertStyleInformational];
+        [alert setMessageText:[NSString stringWithUTF8String:messageCopy.c_str()]];
+        [alert setAccessoryView:createDescriptionLabel(descriptionCopy)];
+
+        if (!iconPathCopy.empty()) {
+            NSImage* icon = [[NSImage alloc] initWithContentsOfFile:[NSString stringWithUTF8String:iconPathCopy.c_str()]];
+            if (icon) {
+                [alert setIcon:icon];
+            }
+        }
+
+        [alert addButtonWithTitle:[NSString stringWithUTF8String:button1TextCopy.c_str()]];
+        if (!button2TextCopy.empty()) {
+            [alert addButtonWithTitle:[NSString stringWithUTF8String:button2TextCopy.c_str()]];
+        }
+
         NSModalResponse response = [alert runModal];
         if (handler) {
             int buttonIndex = 0;

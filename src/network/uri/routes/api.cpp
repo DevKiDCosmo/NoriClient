@@ -90,7 +90,12 @@ void routes::api::api_(uri::MICS::ParsedUri parsed, const std::string &uri, cons
 
                 // Fetch ID
                 auto pathObj = uri::MICS::splitPath(cleanedPath);
-                logger::information("ID: " + pathObj[pathObj.size() - 1]);
+                if (pathObj.empty()) {
+                    logger::warning("No ID segment found after cleaning nori-api path.");
+                    return;
+                }
+
+                logger::information("ID: " + pathObj.back());
             } else if (*purpose == "registration") {
                 // This will do client registration.
                 logger::notImplemented("REGISTRATION purpose is not implemented yet in nori-api.");
