@@ -1,0 +1,46 @@
+name: Build macOS
+author: DevKiD
+description: Builds NoriID.app for macOS using CMake
+
+outputs:
+  app-path:
+    description: "Path to built NoriID.app"
+    value: ${{ steps.build.outputs.app-path }}
+
+runs:
+  using: composite
+
+  steps:
+    - name: Install dependencies
+      shell: bash
+      run: |
+        brew install cmake ninja curl
+
+    - name: Create build directory
+      shell: bash
+      run: mkdir -p cmake-build-release
+
+    - name: Configure CMake
+      shell: bash
+      run: |
+        cd cmake-build-release
+        cmake -G Ninja -DCMAKE_BUILD_TYPE=Release ..
+
+    - name: Build project
+      id: build
+      shell: bash
+      run: |
+        cd cmake-build-release
+        cmake --build . --target NoriID --config Release -j 2
+        echo "app-path=$(pwd)/NoriID.app" >> $GITHUB_OUTPUT
+
+    - name: Verify build output
+      shell: bash
+      run: |
+        if [ -d "cmake-build-release/NoriID.app" ]; then
+          echo "✓ NoriID.app built successfully"
+          ls -lh cmake-build-release/NoriID.app/Contents/MacOS/NoriID
+        else
+          echo "✗ NoriID.app not found!"
+          exit 1
+        fi

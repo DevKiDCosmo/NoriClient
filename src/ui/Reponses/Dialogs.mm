@@ -16,6 +16,17 @@
 #include <sstream>
 
 namespace {
+// ===== CONFIGURATION =====
+// Delay (in milliseconds) before progress dialog appears
+// Change this value to control when the dialog shows up
+// Examples:
+//   500  = 0.5 seconds
+//   1000 = 1.0 second (current)
+//   2000 = 2.0 seconds
+//   5000 = 5.0 seconds
+const int PROGRESS_DIALOG_DELAY_MS = 1000;
+// ========================
+
 NSPanel *gProgressPanel = nil;
 NSProgressIndicator *gProgressBar = nil;
 NSTextField *gProgressDescriptionLabel = nil;
@@ -28,6 +39,8 @@ ui::ProgressDialogFlag gProgressDialogFlag = ui::ProgressDialogFlag::Continuous;
 std::vector<std::string> gProgressStages;
 std::size_t gProgressStageIndex = 0;
 std::chrono::steady_clock::time_point gProgressStartTime;
+std::chrono::steady_clock::time_point gProgressRequestStartTime;
+bool gProgressDialogShown = false;
 
 template <typename Block>
 void runOnMainThreadSync(Block block) {
@@ -93,7 +106,7 @@ void stopElapsedTimer() {
 
 void startElapsedTimerIfNeeded() {
     if (gProgressElapsedTimer || !gProgressPanel) return;
-    gProgressStartTime = std::chrono::steady_clock::now();
+    // gProgressStartTime is already set in showProgressDialog()
     gProgressElapsedTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
     if (!gProgressElapsedTimer) return;
     dispatch_source_set_timer(gProgressElapsedTimer, dispatch_time(DISPATCH_TIME_NOW, 0), 1 * NSEC_PER_SEC, 200 * NSEC_PER_MSEC);
@@ -168,6 +181,8 @@ void clearProgressState() {
     gProgressStages.clear();
     gProgressStageIndex = 0;
     gProgressFunctionHandler = nullptr;
+    gProgressDialogShown = false;
+    gProgressRequestStartTime = std::chrono::steady_clock::time_point();
 }
 } // namespace
 
@@ -207,75 +222,85 @@ void showProgressDialog(const std::string &message, const std::string &descripti
 
         gProgressDialogFlag = flag;
         gProgressStageIndex = 0;
+        gProgressRequestStartTime = std::chrono::steady_clock::now();
+        gProgressStartTime = std::chrono::steady_clock::now();  // Start elapsed time counter NOW
+        gProgressDialogShown = false;
 
-        // Create a custom panel (no buttons, fully customizable layout)
-        NSPanel *panel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 420, 360)
-                                                      styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable)
-                                                        backing:NSBackingStoreBuffered
-                                                          defer:NO];
-        [panel setLevel:NSModalPanelWindowLevel];
-        [panel setTitle:[NSString stringWithUTF8String:messageCopy.c_str()]];
-        [panel setReleasedWhenClosed:NO];
-        [panel setMovable:YES];
-        [panel setMovableByWindowBackground:YES];
-        [panel center];
-
-        NSView *contentView = [[NSView alloc] initWithFrame:[panel contentRectForFrameRect:[panel frame]]];
-        [contentView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-
-        // Icon (if provided)
-        if (!iconPathCopy.empty()) {
-            NSImage *icon = [[NSImage alloc] initWithContentsOfFile:[NSString stringWithUTF8String:iconPathCopy.c_str()]];
-            if (icon) {
-                NSImageView *iconView = [[NSImageView alloc] initWithFrame:NSMakeRect(160, 240, 100, 60)];
-                [iconView setImage:icon];
-                [iconView setImageScaling:NSImageScaleProportionallyUpOrDown];
-                [contentView addSubview:iconView];
+        // Schedule dialog to appear only after configured delay (PROGRESS_DIALOG_DELAY_MS)
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, PROGRESS_DIALOG_DELAY_MS * NSEC_PER_MSEC),
+                       dispatch_get_main_queue(), ^{
+            if (gProgressPanel || !gProgressRequestStartTime.time_since_epoch().count()) {
+                return;  // Already shown or request finished
             }
-        }
 
-        // Description label
-        gProgressDescriptionLabel = createDescriptionLabel(descriptionCopy);
-        [gProgressDescriptionLabel setFrame:NSMakeRect(35, 180, 350, 40)];
-        [contentView addSubview:gProgressDescriptionLabel];
+            gProgressDialogShown = true;
 
-        // Status label (for StatusChain mode)
-        gProgressStatusLabel = createStatusLabel("");
-        [gProgressStatusLabel setFrame:NSMakeRect(35, 150, 350, 20)];
-        [contentView addSubview:gProgressStatusLabel];
+            // Create a custom panel (no buttons, fully customizable layout)
+            NSPanel *panel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 420, 360)
+                                                          styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable)
+                                                            backing:NSBackingStoreBuffered
+                                                              defer:NO];
+            [panel setLevel:NSModalPanelWindowLevel];
+            [panel setTitle:[NSString stringWithUTF8String:messageCopy.c_str()]];
+            [panel setReleasedWhenClosed:NO];
+            [panel setMovable:YES];
+            [panel setMovableByWindowBackground:YES];
+            [panel center];
 
-        // Elapsed label
-        gProgressElapsedLabel = createStatusLabel("Elapsed: 00:00");
-        [gProgressElapsedLabel setFont:[NSFont systemFontOfSize:11]];
-        [gProgressElapsedLabel setFrame:NSMakeRect(35, 120, 350, 18)];
-        [contentView addSubview:gProgressElapsedLabel];
+            NSView *contentView = [[NSView alloc] initWithFrame:[panel contentRectForFrameRect:[panel frame]]];
+            [contentView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
 
-        // Progress bar (linear indeterminate bar with built-in animation)
-        gProgressBar = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(35, 65, 350, 20)];
-        [gProgressBar setIndeterminate:YES];
-        [gProgressBar setStyle:NSProgressIndicatorStyleBar];
-        [gProgressBar setControlSize:NSControlSizeRegular];
-        [gProgressBar setDisplayedWhenStopped:YES];
-        [gProgressBar startAnimation:nil];
-        [contentView addSubview:gProgressBar];
+            // Icon (if provided)
+            if (!iconPathCopy.empty()) {
+                NSImage *icon = [[NSImage alloc] initWithContentsOfFile:[NSString stringWithUTF8String:iconPathCopy.c_str()]];
+                if (icon) {
+                    NSImageView *iconView = [[NSImageView alloc] initWithFrame:NSMakeRect(160, 240, 100, 60)];
+                    [iconView setImage:icon];
+                    [iconView setImageScaling:NSImageScaleProportionallyUpOrDown];
+                    [contentView addSubview:iconView];
+                }
+            }
 
-        if (flag == ProgressDialogFlag::StatusChain) {
-            updateStageLabel();
-        } else {
-            [gProgressStatusLabel setHidden:YES];
-        }
+            // Description label
+            gProgressDescriptionLabel = createDescriptionLabel(descriptionCopy);
+            [gProgressDescriptionLabel setFrame:NSMakeRect(35, 180, 350, 40)];
+            [contentView addSubview:gProgressDescriptionLabel];
 
-        [panel setContentView:contentView];
-        gProgressPanel = panel;
+            // Status label (for StatusChain mode)
+            gProgressStatusLabel = createStatusLabel("");
+            [gProgressStatusLabel setFrame:NSMakeRect(35, 150, 350, 20)];
+            [contentView addSubview:gProgressStatusLabel];
 
-        [NSApp activateIgnoringOtherApps:YES];
-        [panel makeKeyAndOrderFront:nil];
+            // Elapsed label
+            gProgressElapsedLabel = createStatusLabel("Elapsed: 00:00");
+            [gProgressElapsedLabel setFont:[NSFont systemFontOfSize:11]];
+            [gProgressElapsedLabel setFrame:NSMakeRect(35, 120, 350, 18)];
+            [contentView addSubview:gProgressElapsedLabel];
 
-        // Give AppKit one run-loop tick so the dialog can render before the request continues.
-        [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+            // Progress bar (linear indeterminate bar with built-in animation)
+            gProgressBar = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(35, 65, 350, 20)];
+            [gProgressBar setIndeterminate:YES];
+            [gProgressBar setStyle:NSProgressIndicatorStyleBar];
+            [gProgressBar setControlSize:NSControlSizeRegular];
+            [gProgressBar setDisplayedWhenStopped:YES];
+            [gProgressBar startAnimation:nil];
+            [contentView addSubview:gProgressBar];
 
-        startProgressFunctionTimerIfNeeded();
-        startElapsedTimerIfNeeded();
+            if (gProgressDialogFlag == ProgressDialogFlag::StatusChain) {
+                updateStageLabel();
+            } else {
+                [gProgressStatusLabel setHidden:YES];
+            }
+
+            [panel setContentView:contentView];
+            gProgressPanel = panel;
+
+            [NSApp activateIgnoringOtherApps:YES];
+            [panel makeKeyAndOrderFront:nil];
+
+            startProgressFunctionTimerIfNeeded();
+            startElapsedTimerIfNeeded();
+        });
     });
 }
 

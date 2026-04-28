@@ -1,0 +1,91 @@
+name: Build macOS
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        submodules: recursive
+
+    - name: Install dependencies
+      run: |
+        brew install cmake ninja curl
+
+    - name: Create build directory
+      run: mkdir -p cmake-build-release
+
+    - name: Configure CMake
+      run: |
+        cd cmake-build-release
+        cmake -G Ninja -DCMAKE_BUILD_TYPE=Release ..
+
+    - name: Build project
+      run: |
+        cd cmake-build-release
+        cmake --build . --target NoriID --config Release -j 2
+
+    - name: Verify build output
+      run: |
+        if [ -d "cmake-build-release/NoriID.app" ]; then
+          echo "✓ NoriID.app built successfully"
+          ls -lh cmake-build-release/NoriID.app/Contents/MacOS/NoriID
+        else
+          echo "✗ NoriID.app not found!"
+          exit 1
+        fi
+
+    - name: Create DMG archive
+      run: |
+        mkdir -p dist
+        cp -r cmake-build-release/NoriID.app dist/
+        hdiutil create -volname "NoriID" -srcfolder dist -ov -format UDZO dist/NoriID.dmg
+
+    - name: Upload NoriID.app Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: NoriID-macOS
+        path: cmake-build-release/NoriID.app
+        retention-days: 30
+
+    - name: Upload DMG Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: NoriID-macOS-DMG
+        path: dist/NoriID.dmg
+        retention-days: 30
+
+    - name: Create Release (on tag)
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Release ${{ github.ref_name }}
+        body: |
+          macOS build for NoriID
+          - **App:** NoriID.app
+          - **DMG:** NoriID.dmg
+        draft: false
+        prerelease: false
+
+    - name: Upload Release Assets (on tag)
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./dist/NoriID.dmg
+        asset_name: NoriID-${{ github.ref_name }}.dmg
+        asset_content_type: application/octet-stream
+
