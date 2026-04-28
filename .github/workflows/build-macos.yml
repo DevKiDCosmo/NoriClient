@@ -12,7 +12,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         submodules: recursive
 
@@ -50,14 +50,14 @@ jobs:
         hdiutil create -volname "NoriID" -srcfolder dist -ov -format UDZO dist/NoriID.dmg
 
     - name: Upload NoriID.app Artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: NoriID-macOS
         path: cmake-build-release/NoriID.app
         retention-days: 30
 
     - name: Upload DMG Artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: NoriID-macOS-DMG
         path: dist/NoriID.dmg
