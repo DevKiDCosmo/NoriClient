@@ -7,8 +7,8 @@
 #include "utilURI.h"
 
 // ---- IDN → ASCII using libidn2 ----
-std::string toASCII_IDN(const std::string& input) {
-    char* output = nullptr;
+std::string toASCII_IDN(const std::string &input) {
+    char *output = nullptr;
 
     // IDN2_NONTRANSITIONAL is recommended for modern behavior
     int rc = idn2_to_ascii_8z(input.c_str(), &output, IDN2_NONTRANSITIONAL);
@@ -22,7 +22,7 @@ std::string toASCII_IDN(const std::string& input) {
     return result;
 }
 
-bool isAllDigits(const std::string& s) {
+bool isAllDigits(const std::string &s) {
     return !s.empty() &&
            std::all_of(s.begin(), s.end(),
                        [](unsigned char c) { return std::isdigit(c); });
@@ -81,11 +81,12 @@ bool uri::validate::Host::validateHost(std::string host) {
         return false;
 
     // Optional blacklist
-    static const std::string invalidTlds[] = {
-        "invalid", "test", "example", "localhost"
-    };
+    //static const std::string invalidTlds[] = {
+    //    "invalid", "test", "example", "localhost"
+    //};
+    static const std::vector<std::string> invalidTlds{"invalid", "test", "example", "localhost"};
 
-    for (const auto& bad : invalidTlds) {
+    for (const auto &bad: invalidTlds) {
         if (tld == bad)
             return false;
     }

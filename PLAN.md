@@ -7,6 +7,24 @@
 - Updating reason for authentication. Or make a function where the process is called and it is just going through.
 - Adding new msg for id login.
 - Connecting loose function to any header
+- If multiple authentication required. Create list what should be autenticate. First normal flow then a list with all action that can be run. This ensure a one login instead multiple.
+
+- Adding PORT to chain. Instead only 
+
+```cpp
+network::request::ProtocolChain chain = network::request::ProtocolChain::create({
+  "kaizo://", "kzps://", "nori-slk://", "nori-loop://", "nori-auth://", "https://", "http://"
+});
+```
+
+```cpp
+network::request::ProtocolChain chain = network::request::ProtocolChain::create({
+  {"kaizo://", 0}, {"kzps://", 0}, {"nori-slk://", 0}, {"nori-loop://", 0}, {"nori-auth://", 0}, {"https://", 443}, {"http://", 80}
+});
+```
+
+- Platform compactble for other and also in action add to cmake also release and do not use debug
+- Update Info-plist so there is an icon at laest.
 
 # Loose Function
 Freie Top-Level-Funktionen

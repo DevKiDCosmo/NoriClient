@@ -148,6 +148,7 @@ void uri::MICS::logUrlEncodedCandidates(const std::string &data) {
             i = j - 1; // Continue scanning after this block.
         }
     }
+    logger::debug(std::format("Found any: {}.", foundAny));
 }
 
 /**

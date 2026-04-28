@@ -66,17 +66,6 @@ NSTextField *createStatusLabel(const std::string &text) {
     return label;
 }
 
-NSWindow *resolvePresentationWindow() {
-    if (NSWindow *window = [NSApp keyWindow]) {
-        return window;
-    }
-    if (NSWindow *window = [NSApp mainWindow]) {
-        return window;
-    }
-    NSArray<NSWindow *> *windows = [NSApp windows];
-    return windows.count > 0 ? static_cast<NSWindow *>([windows firstObject]) : nil;
-}
-
 void stopProgressFunctionTimer() {
     if (gProgressFunctionTimer) {
         dispatch_source_cancel(gProgressFunctionTimer);
@@ -89,26 +78,6 @@ void stopElapsedTimer() {
         dispatch_source_cancel(gProgressElapsedTimer);
         gProgressElapsedTimer = nil;
     }
-}
-
-void startElapsedTimerIfNeeded() {
-    if (gProgressElapsedTimer || !gProgressPanel) return;
-    gProgressStartTime = std::chrono::steady_clock::now();
-    gProgressElapsedTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-    if (!gProgressElapsedTimer) return;
-    dispatch_source_set_timer(gProgressElapsedTimer, dispatch_time(DISPATCH_TIME_NOW, 0), 1 * NSEC_PER_SEC, 200 * NSEC_PER_MSEC);
-    dispatch_source_set_event_handler(gProgressElapsedTimer, ^{
-        if (!gProgressElapsedLabel) return;
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - gProgressStartTime).count();
-        int minutes = static_cast<int>(elapsed / 60);
-        int seconds = static_cast<int>(elapsed % 60);
-        std::ostringstream ss;
-        ss << std::setfill('0') << std::setw(2) << minutes << ":" << std::setfill('0') << std::setw(2) << seconds;
-        std::string s = std::string("Elapsed: ") + ss.str();
-        runOnMainThreadSync(^{ [gProgressElapsedLabel setStringValue:[NSString stringWithUTF8String:s.c_str()]]; });
-    });
-    dispatch_resume(gProgressElapsedTimer);
 }
 
 void startProgressFunctionTimerIfNeeded() {
@@ -131,6 +100,26 @@ void startProgressFunctionTimerIfNeeded() {
         }
     });
     dispatch_resume(gProgressFunctionTimer);
+}
+
+void startElapsedTimerIfNeeded() {
+    if (gProgressElapsedTimer || !gProgressPanel) return;
+    gProgressStartTime = std::chrono::steady_clock::now();
+    gProgressElapsedTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    if (!gProgressElapsedTimer) return;
+    dispatch_source_set_timer(gProgressElapsedTimer, dispatch_time(DISPATCH_TIME_NOW, 0), 1 * NSEC_PER_SEC, 200 * NSEC_PER_MSEC);
+    dispatch_source_set_event_handler(gProgressElapsedTimer, ^{
+        if (!gProgressElapsedLabel) return;
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - gProgressStartTime).count();
+        int minutes = static_cast<int>(elapsed / 60);
+        int seconds = static_cast<int>(elapsed % 60);
+        std::ostringstream ss;
+        ss << std::setfill('0') << std::setw(2) << minutes << ":" << std::setfill('0') << std::setw(2) << seconds;
+        std::string s = std::string("Elapsed: ") + ss.str();
+        runOnMainThreadSync(^{ [gProgressElapsedLabel setStringValue:[NSString stringWithUTF8String:s.c_str()]]; });
+    });
+    dispatch_resume(gProgressElapsedTimer);
 }
 
 void updateStageLabel() {
@@ -174,7 +163,7 @@ void clearProgressState() {
 namespace ui {
 
 void functionProgressDialog(const std::function<void()> &handler) {
-    const std::function<void()> handlerCopy = handler;
+    auto handlerCopy = handler;
     runOnMainThreadSync(^{
         gProgressFunctionHandler = handlerCopy;
         if (!gProgressFunctionHandler) {
@@ -208,9 +197,9 @@ void showProgressDialog(const std::string &message, const std::string &descripti
         gProgressDialogFlag = flag;
         gProgressStageIndex = 0;
 
-        // Create a custom panel (no buttons, fully customizable layout)
-        NSPanel *panel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 420, 360)
-                                                      styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable)
+        // Create a custom panel (no buttons)
+        NSPanel *panel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 420, 320)
+                                                      styleMask:(NSTitledWindowMask | NSClosableWindowMask)
                                                         backing:NSBackingStoreBuffered
                                                           defer:NO];
         [panel setLevel:NSModalPanelWindowLevel];
@@ -250,10 +239,10 @@ void showProgressDialog(const std::string &message, const std::string &descripti
         [gProgressElapsedLabel setFrame:NSMakeRect(35, 120, 350, 18)];
         [contentView addSubview:gProgressElapsedLabel];
 
-        // Progress bar (linear indeterminate bar with built-in animation)
-        gProgressBar = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(35, 65, 350, 20)];
+        // Progress bar (spinner or determinate)
+        gProgressBar = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(160, 40, 100, 100)];
         [gProgressBar setIndeterminate:YES];
-        [gProgressBar setStyle:NSProgressIndicatorStyleBar];
+        [gProgressBar setStyle:NSProgressIndicatorSpinnerStyle];
         [gProgressBar setControlSize:NSControlSizeRegular];
         [gProgressBar setDisplayedWhenStopped:YES];
         [gProgressBar startAnimation:nil];
@@ -297,10 +286,11 @@ void updateProgress(double fraction) {
     const double clampedFraction = fraction < 0.0 ? 0.0 : (fraction > 1.0 ? 1.0 : fraction);
     runOnMainThreadSync(^{
         if (!gProgressBar) return;
-        // If caller provides determinate updates, switch to determinate mode (stops animation)
+        // If caller provides determinate updates, switch to determinate mode
         if ([gProgressBar isIndeterminate]) {
             [gProgressBar stopAnimation:nil];
             [gProgressBar setIndeterminate:NO];
+            [gProgressBar setStyle:NSProgressIndicatorBarStyle];
             [gProgressBar setMinValue:0.0];
             [gProgressBar setMaxValue:1.0];
         }
@@ -373,3 +363,4 @@ void closeProgressDialog() {}
 void showButtonDialog(const std::string &, const std::string &, const std::string &, const std::string &, const std::string &, const std::function<void(int)> &) {}
 } // namespace ui
 #endif
+

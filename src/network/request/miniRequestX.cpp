@@ -5,7 +5,9 @@
 
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
+#include <format>
 #include <string_view>
+#include <thread>
 
 namespace network::request {
     const ProtocolChain MiniRequest::chainHTTP = ProtocolChain::create({"https://", "http://"});
@@ -17,7 +19,8 @@ namespace network::request {
         return realSize;
     }
 
-    int progressCallback(void *clientp, curl_off_t dltotal, curl_off_t dlnow, curl_off_t ultotal, curl_off_t ulnow) {
+    int progressCallback([[maybe_unused]] void *clientp, curl_off_t dltotal, curl_off_t dlnow,
+                         [[maybe_unused]] curl_off_t ultotal, [[maybe_unused]] curl_off_t ulnow) {
         if (dltotal > 0) {
             double fraction = static_cast<double>(dlnow) / static_cast<double>(dltotal);
             ui::updateProgress(fraction);
@@ -54,7 +57,7 @@ namespace network::request {
 
         const network::request::HttpResponse &response = *fetchResult.response;
         if (response.statusCode < 200 || response.statusCode >= 300) {
-            logger::warning("nori-api request returned HTTP " + std::to_string(response.statusCode));
+            logger::warning(std::format("nori-api request returned HTTP {}", response.statusCode));
             ui::showButtonDialog("Request Error", response.body, dialogIconPath, "OK", "", nullptr);
             return false;
         }
@@ -115,8 +118,10 @@ namespace network::request {
                 return {FetchStatus::Failed, std::nullopt, "Failed to initialize curl"};
             }
 
-            // Adding fake delay to request to see in action
+            // Show the progress dialog before the blocking request starts.
             ui::showProgressDialog("Connecting...", "Fetching data from the server.", dialogIconPath);
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(3000));
 
             std::string fullUrl = protocol + url;
             logger::debug("Attempting request with URL: " + fullUrl);
@@ -126,10 +131,12 @@ namespace network::request {
             curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
             curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
             curl_easy_setopt(curl, CURLOPT_TIMEOUT, 20L);
+            curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2 | CURL_SSLVERSION_MAX_TLSv1_3);
             curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
             curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response.body);
             curl_easy_setopt(curl, CURLOPT_USERAGENT, "NoriID/1.0");
             curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+            // Enable live progress tracking - progressCallback updates the progress bar during transfer
             curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progressCallback);
 
             if (std::string_view(url).find("127.0.0.1") != std::string::npos) {
